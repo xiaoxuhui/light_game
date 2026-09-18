@@ -1,0 +1,33 @@
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and temporary files
+*.log
+.cache/
+tmp/
+temp/
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/
+
+# Dependencies (reserved for future tooling; the app itself must not require them)
+node_modules/
+
+# Android build outputs (reserved for the future APK stage)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/
+*.apk
+*.keystore

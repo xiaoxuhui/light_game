@@ -1,0 +1,22 @@
+# 换行规范：保证 Windows 检出与 Linux CI 构建器看到一致的内容
+* text=auto
+
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.cjs  text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# 安卓构建脚本：gradlew 必须 LF，否则 Linux 构建器报 bad interpreter
+gradlew  text eol=lf
+*.bat    text eol=crlf
+
+# 二进制资源不要被改写
+*.png binary
+*.jpg binary
+*.ico binary
+*.apk binary
