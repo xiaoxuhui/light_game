@@ -2,7 +2,7 @@
 
 // 浏览器冒烟：验证「页面能开、画布能画、控制台干净、窗口变化不炸」。
 // 桌面与移动两个项目都会跑（见 playwright.config.js）。
-// 玩法相关的验收用例待需求确定后另开 spec，不要往这里堆。
+// 玩法相关的验收用例在 gameplay.spec.js，不要往这里堆。
 
 const { expect, test } = require("@playwright/test");
 const { version } = require("../package.json");
@@ -37,24 +37,28 @@ test("画布按设备像素比初始化，且已绘制内容", async ({ page }) 
   expect(Math.abs(metrics.width - box.width * Math.min(metrics.dpr, 2))).toBeLessThanOrEqual(1);
 });
 
-test("待机场景真的画出了非背景像素", async ({ page }) => {
+test("画布真的画出了关卡场景（网格、元件与光路）", async ({ page }) => {
   await page.goto("/");
   // 等两帧，确保渲染循环已经跑起来
   await page.waitForTimeout(300);
 
-  const centerPixel = await page.locator("#stage").evaluate((element) => {
+  const stats = await page.locator("#stage").evaluate((element) => {
     const ctx = element.getContext("2d");
-    const data = ctx.getImageData(
-      Math.floor(element.width / 2),
-      Math.floor(element.height / 2),
-      1,
-      1,
-    ).data;
-    return { r: data[0], g: data[1], b: data[2] };
+    const data = ctx.getImageData(0, 0, element.width, element.height).data;
+    const colors = new Set();
+    for (let y = 0; y < element.height; y += 7) {
+      for (let x = 0; x < element.width; x += 7) {
+        const offset = (y * element.width + x) * 4;
+        colors.add(`${data[offset]},${data[offset + 1]},${data[offset + 2]}`);
+      }
+    }
+    return { unique: colors.size, width: element.width, height: element.height };
   });
 
-  // 画布中心是暖色光核，不应仍是深色背景 #08090c
-  expect(centerPixel.r).toBeGreaterThan(120);
+  expect(stats.width).toBeGreaterThan(0);
+  expect(stats.height).toBeGreaterThan(0);
+  // 纯背景只有 1 种颜色；网格线、格底、元件与光段会带来大量不同色值
+  expect(stats.unique).toBeGreaterThan(8);
 });
 
 test("窗口尺寸变化后画布跟随重算", async ({ page }) => {
