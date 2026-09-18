@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#08090C" />
   <meta name="color-scheme" content="dark" />
-  <meta name="description" content="光的游戏 —— 一个可离线运行的浏览器小游戏，支持键盘与触摸操作。" />
+  <meta name="description" content="光的游戏 —— 一个可离线运行的网格光路解谜游戏，支持键盘与触摸操作。" />
   <title>光的游戏 · Light Game</title>
   <!-- 内联 favicon：占位光点，避免 /favicon.ico 404；正式图标待安卓打包阶段统一出图 -->
   <link
@@ -17,23 +17,41 @@
 <body>
   <div class="app">
     <header class="hud hud--top">
-      <h1 class="hud__title">光的游戏</h1>
-      <span class="hud__version" data-app-version>v0.1.0</span>
+      <button class="btn btn--ghost" id="btn-levels" type="button">关卡</button>
+      <div class="hud__meta">
+        <h1 class="hud__title" id="level-title">光的游戏</h1>
+        <p class="hud__sub" id="level-sub"></p>
+      </div>
+      <div class="hud__stars" id="level-stars" aria-live="polite"></div>
     </header>
 
     <main class="stage-area">
       <canvas id="stage" class="stage" role="img" aria-label="游戏画布"></canvas>
+      <p class="stage__hint" id="level-hint"></p>
     </main>
 
     <footer class="hud hud--bottom">
-      <p class="hud__hint" id="hud-hint">骨架版本 · 玩法待需求确定</p>
+      <div class="toolbar" id="toolbar" role="toolbar" aria-label="元件工具栏"></div>
+      <div class="hud__actions">
+        <button class="btn btn--ghost" id="btn-clear" type="button">清空</button>
+        <span class="hud__version" data-app-version>v0.1.0</span>
+      </div>
     </footer>
+  </div>
+
+  <div class="overlay" id="overlay" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <h2 class="sheet__title" id="sheet-title"></h2>
+      <div class="sheet__body" id="sheet-body"></div>
+      <div class="sheet__actions" id="sheet-actions"></div>
+    </div>
   </div>
 
   <!-- 玩法脚本按依赖顺序加载：顺序即依赖顺序，不可打乱 -->
   <script defer src="scripts/light-core.js"></script>
   <script defer src="scripts/light-engine.js"></script>
   <script defer src="scripts/levels.js"></script>
+  <script defer src="scripts/renderer.js"></script>
   <script defer src="scripts/app.js"></script>
 </body>
 </html>
