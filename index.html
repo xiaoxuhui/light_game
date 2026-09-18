@@ -30,7 +30,8 @@
     </footer>
   </div>
 
-  <!-- 玩法脚本（光引擎、渲染器、关卡等）待需求确定后按依赖顺序添加在这里 -->
+  <!-- 玩法脚本按依赖顺序加载：顺序即依赖顺序，不可打乱 -->
+  <script defer src="scripts/light-core.js"></script>
   <script defer src="scripts/app.js"></script>
 </body>
 </html>

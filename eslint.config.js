@@ -3,8 +3,11 @@
 // 每新增一个跨文件全局（如 LightEngine / Renderer），都要补到这里。
 // 运行：npm run lint（本地开发用，CI 中作为门禁）
 const crossScriptGlobals = {
+  LightCore: "readonly",
   LightEngine: "readonly",
+  LightLevels: "readonly",
   LightRenderer: "readonly",
+  LightStorage: "readonly",
 };
 
 module.exports = [
