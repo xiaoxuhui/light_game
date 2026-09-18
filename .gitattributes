@@ -1,5 +1,5 @@
-# 换行规范：保证 Windows 检出与 Linux CI 构建器看到一致的内容
-* text=auto
+# 换行规范：仓库内统一 LF，保证 Windows 检出与 Linux CI 构建器看到一致的内容
+* text=auto eol=lf
 
 *.js   text eol=lf
 *.mjs  text eol=lf
