@@ -1,0 +1,129 @@
+/* 光的游戏 —— 基础样式
+   设计基调：深色底 + 暖色光，舞台占满可视区，HUD 只做极简信息层。
+   主题色变量集中在 :root，改主题只动这里。 */
+
+:root {
+  --bg-deep: #08090c;
+  --bg-panel: rgba(255, 255, 255, 0.04);
+  --border-soft: rgba(255, 255, 255, 0.08);
+  --text-main: #f2f3f7;
+  --text-dim: rgba(242, 243, 247, 0.6);
+  --accent: #ffd479;
+  --accent-dim: rgba(255, 212, 121, 0.35);
+
+  --hud-height: 2.75rem;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-deep);
+  color: var(--text-main);
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  overflow: hidden;
+  /* 触摸端禁掉双击缩放与长按菜单干扰，键盘端无影响 */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: var(--hud-height) 1fr var(--hud-height);
+  height: 100%;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+/* ---------- HUD ---------- */
+
+.hud {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1rem;
+  font-size: 0.8125rem;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  border-color: var(--border-soft);
+}
+
+.hud--top {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hud--bottom {
+  justify-content: center;
+  border-top: 1px solid var(--border-soft);
+}
+
+.hud__title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-main);
+}
+
+.hud__version {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--accent-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 0.25rem 0.625rem;
+}
+
+.hud__hint {
+  margin: 0;
+  text-align: center;
+}
+
+/* ---------- 舞台 ---------- */
+
+.stage-area {
+  position: relative;
+  min-height: 0;
+  display: flex;
+}
+
+.stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* 画布像素尺寸由 app.js 按 devicePixelRatio 设置，这里只负责 CSS 尺寸 */
+}
+
+/* ---------- 无障碍与偏好 ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .hud {
+    transition: none;
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --hud-height: 2.5rem;
+  }
+
+  .hud__title {
+    font-size: 0.875rem;
+  }
+}

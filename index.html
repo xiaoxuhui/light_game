@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#08090C" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="光的游戏 —— 一个可离线运行的浏览器小游戏，支持键盘与触摸操作。" />
+  <title>光的游戏 · Light Game</title>
+  <!-- 内联 favicon：占位光点，避免 /favicon.ico 404；正式图标待安卓打包阶段统一出图 -->
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2308090c'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ffd479' stroke-opacity='.45' stroke-width='3'/%3E%3Ccircle cx='32' cy='32' r='11' fill='%23fff2cf'/%3E%3C/svg%3E"
+  />
+  <link rel="stylesheet" href="styles/main.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hud hud--top">
+      <h1 class="hud__title">光的游戏</h1>
+      <span class="hud__version" data-app-version>v0.1.0</span>
+    </header>
+
+    <main class="stage-area">
+      <canvas id="stage" class="stage" role="img" aria-label="游戏画布"></canvas>
+    </main>
+
+    <footer class="hud hud--bottom">
+      <p class="hud__hint" id="hud-hint">骨架版本 · 玩法待需求确定</p>
+    </footer>
+  </div>
+
+  <!-- 玩法脚本（光引擎、渲染器、关卡等）待需求确定后按依赖顺序添加在这里 -->
+  <script defer src="scripts/app.js"></script>
+</body>
+</html>
