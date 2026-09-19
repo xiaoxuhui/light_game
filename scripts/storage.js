@@ -382,7 +382,7 @@
         if (typeof text !== "string") return;
         try {
           bridge.saveFile(name, text);
-        } catch (error) {
+        } catch {
           // 桥异常时原生侧会给出失败提示；WebView 里浏览器下载本就不可用，无需回退
         }
       });
