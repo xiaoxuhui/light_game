@@ -204,6 +204,10 @@ test("T14 星数汇总：未通关记 0，超过 3 的星数被截断", () => {
     t04: { stars: -5 },
   });
   assert.equal(mixed.earned, 3 + 2 + 3, "超范围值应被截断到 0–3");
+
+  // 存档里用的是「直接给数字」的写法，也必须能汇总
+  assert.equal(levels.totalStars({ t01: 3, t02: 2 }).earned, 5);
+  assert.equal(levels.totalStars({ t01: 3, t02: 99 }).earned, 6, "数字写法同样要截断");
 });
 
 test("T14 每关的网格尺寸都在合法范围内，且目标都在界内", () => {
