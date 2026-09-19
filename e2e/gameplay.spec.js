@@ -543,3 +543,146 @@ test("U08 工作台可以保存当前布局并重新载入", async ({ page }) =>
 
   expect((await readState(page)).placedCount).toBe(1);
 });
+
+// ---------- 阶段 3：极端关卡的降级表现 ----------
+
+/**
+ * 生成一个必然触发光路过载的压力关卡文件。
+ *
+ * 40×40 铺满 999 个分光镜、朝向取 `(x*y)%2`。这个确定性图案能把求解器顶到
+ * MAX_SEGMENTS = 4096 的上限（试过多种规则图案：交替 `(x+y)%2`、棋盘 `(x^y)&1`
+ * 这类都只有 2200 段左右，只有带乘积的会散得这么开）。
+ * 走的是真实的「导入外部关卡文件」路径，不直接调内部函数改状态。
+ */
+function stressLevelFile() {
+  const cols = 40;
+  const rows = 40;
+  const emitter = { x: 0, y: 20 };
+  const target = { x: 39, y: 39 };
+
+  const placement = [];
+  for (let y = 0; y < rows && placement.length < 999; y += 1) {
+    for (let x = 0; x < cols && placement.length < 999; x += 1) {
+      // 预设元件格与目标格不能放东西，校验会拒
+      if (x === emitter.x && y === emitter.y) continue;
+      if (x === target.x && y === target.y) continue;
+      placement.push({ type: "splitter", x, y, orient: (x * y) % 2 });
+    }
+  }
+
+  return JSON.stringify({
+    schema: "light-game/level",
+    version: 1,
+    id: "stress-overflow",
+    title: "压力测试",
+    chapter: 0,
+    cols,
+    rows,
+    par: 0,
+    fixed: [{ type: "emitter", x: emitter.x, y: emitter.y, dir: "right", color: 1 }],
+    targets: [{ x: target.x, y: target.y, require: 1 }],
+    inventory: { mirror: 0, splitter: 999, dichroicR: 0, dichroicG: 0, dichroicB: 0 },
+    hint: "压力测试关卡。",
+    placement,
+  });
+}
+
+test("U12 光路过载时给出警示提示，而不是无声地画一半", async ({ page }) => {
+  await openLevel(page, "t02");
+
+  await page.locator("#file-import").setInputFiles({
+    name: "stress.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(stressLevelFile(), "utf8"),
+  });
+  await settle(page);
+
+  expect((await readState(page)).levelId).toBe("stress-overflow");
+
+  const result = await page.evaluate(() => ({
+    overflow: window.__lightGame.state.result.overflow,
+    segments: window.__lightGame.state.result.segments.length,
+  }));
+  expect(result.overflow).toBe(true, "压力关卡应当真的顶到光段上限");
+  expect(result.segments).toBe(4096);
+
+  const status = page.locator("#level-status");
+  await expect(status).toBeVisible();
+  await expect(status).toContainText("光路过于复杂");
+  await expect(status).toHaveClass(/stage__status--warn/);
+
+  // 降级不等于卡死：仍然可以正常操作、撤销和切关
+  await page.locator("#btn-undo").click();
+  await settle(page);
+  const undone = await page.evaluate(() => window.__lightGame.state.result.overflow);
+  expect(undone).toBe(false, "撤销掉过量元件后应恢复正常求解");
+  await expect(status).not.toHaveClass(/stage__status--warn/);
+
+  await page.locator("#btn-levels").click();
+  await page.locator("#sheet-body .level-item", { hasText: "折一下" }).click();
+  await settle(page);
+  expect((await readState(page)).levelId).toBe("t02", "过载的关卡不该让导航失效");
+});
+
+// ---------- 阶段 3：响应式与动效偏好 ----------
+
+test("U09 手机、平板与桌面三种视口下，工具栏都不遮挡网格", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 640 });
+  await openLevel(page, "e06"); // 工具栏项最多的一关：镜子 + 分光 + 红镜 + 橡皮
+
+  for (const [width, height] of [
+    [360, 640],
+    [768, 1024],
+    [1280, 800],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await settle(page);
+
+    const stage = await page.locator("#stage").boundingBox();
+    const toolbar = await page.locator("#toolbar").boundingBox();
+    const label = width + "×" + height;
+
+    expect(stage.height, label + " 下画布不该被挤成 0").toBeGreaterThan(0);
+    expect(stage.y + stage.height, label + " 下工具栏压到了网格上").toBeLessThanOrEqual(
+      toolbar.y + 1,
+    );
+
+    const tools = page.locator("#toolbar .tool");
+    await expect(tools).toHaveCount(4);
+    for (let i = 0; i < 4; i += 1) {
+      const box = await tools.nth(i).boundingBox();
+      expect(box.x, label + " 下第 " + (i + 1) + " 个工具超出左边界").toBeGreaterThanOrEqual(-1);
+      expect(box.x + box.width, label + " 下第 " + (i + 1) + " 个工具超出右边界").toBeLessThanOrEqual(
+        width + 1,
+      );
+      expect(box.y + box.height, label + " 下第 " + (i + 1) + " 个工具超出下边界").toBeLessThanOrEqual(
+        height + 1,
+      );
+    }
+
+    // 视口变了画布必须跟着重算，不能留着上一个尺寸
+    const buffer = await page.evaluate(() => {
+      const canvas = document.getElementById("stage");
+      return { w: canvas.width, h: canvas.height };
+    });
+    expect(buffer.w, label + " 下后备缓冲宽度没重算").toBeGreaterThan(0);
+    expect(buffer.h, label + " 下后备缓冲高度没重算").toBeGreaterThan(0);
+  }
+});
+
+test("U13 系统偏好减少动效时关掉过渡，但玩法一点不受影响", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openLevel(page, "t02");
+
+  const duration = await page
+    .locator("#btn-clear")
+    .evaluate((element) => getComputedStyle(element).transitionDuration);
+  expect(duration).toBe("0s", "减少动效时按钮过渡应当被关掉");
+
+  // 关掉动效不等于关掉玩法
+  await placeSolvingMirror(page);
+  await settle(page);
+  const state = await readState(page);
+  expect(state.allLit).toBe(true);
+  expect(state.overlayOpen).toBe(true);
+});
