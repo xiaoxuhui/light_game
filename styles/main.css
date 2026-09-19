@@ -159,6 +159,11 @@ body {
   color: var(--accent);
 }
 
+.btn--danger {
+  border-color: rgba(255, 122, 122, 0.45);
+  color: var(--danger);
+}
+
 .btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

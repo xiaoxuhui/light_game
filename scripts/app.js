@@ -24,6 +24,12 @@
 
   const ERASER = "__eraser";
 
+  /** 撤销栈上限。每个快照只是布局数组的浅拷贝，100 步既够用又不会无限吃内存。 */
+  const MAX_HISTORY = 100;
+
+  /** 「清空」的二次确认窗口：这段时间内不再点，就当作误触自动复位 */
+  const CLEAR_CONFIRM_MS = 3000;
+
   const TYPE_NAMES = {
     mirror: "反射镜",
     splitter: "分光镜",
@@ -41,6 +47,8 @@
     toolbar: document.getElementById("toolbar"),
     btnLevels: document.getElementById("btn-levels"),
     btnClear: document.getElementById("btn-clear"),
+    btnUndo: document.getElementById("btn-undo"),
+    btnRedo: document.getElementById("btn-redo"),
     status: document.getElementById("level-status"),
     btnNext: document.getElementById("btn-next"),
     overlay: document.getElementById("overlay"),
@@ -60,6 +68,8 @@
     result: null,
     layout: null,
     stars: {},
+    history: [],
+    historyIndex: -1,
     dirty: true,
     running: false,
     frameId: 0,
@@ -131,11 +141,92 @@
     state.result = engine.solve(level, state.placement);
   }
 
+  /** 一次会写进撤销栈的改动：先记历史，再重算 */
   function commit() {
+    pushHistory();
+    refresh(false);
+  }
+
+  /** 重算 + 刷 HUD + 重绘，不碰历史栈。silent = 通关时不弹结算浮层 */
+  function refresh(silent) {
     recompute();
     updateHud();
     markDirty();
-    checkCompletion(false);
+    checkCompletion(silent === true);
+  }
+
+  // ---------- 撤销 / 重做 ----------
+  //
+  // 快照式：栈里存的是「每一步操作之后的元件布局」。
+  // 只记录布局，不记录渲染或派生状态，因此重做的结果是确定的。
+
+  function clonePlacement(list) {
+    return list.map((item) => ({
+      type: item.type,
+      x: item.x,
+      y: item.y,
+      orient: item.orient,
+    }));
+  }
+
+  function samePlacement(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (
+        a[i].type !== b[i].type ||
+        a[i].x !== b[i].x ||
+        a[i].y !== b[i].y ||
+        a[i].orient !== b[i].orient
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function resetHistory() {
+    state.history = [clonePlacement(state.placement)];
+    state.historyIndex = 0;
+  }
+
+  function pushHistory() {
+    const current = clonePlacement(state.placement);
+    const last = state.history[state.historyIndex];
+    if (last && samePlacement(last, current)) return;
+
+    // 产生新分支时砍掉原来的重做链
+    state.history = state.history.slice(0, state.historyIndex + 1);
+    state.history.push(current);
+    if (state.history.length > MAX_HISTORY) state.history.shift();
+    state.historyIndex = state.history.length - 1;
+  }
+
+  function canUndo() {
+    return state.historyIndex > 0;
+  }
+
+  function canRedo() {
+    return state.historyIndex >= 0 && state.historyIndex < state.history.length - 1;
+  }
+
+  /** 撤销（delta = −1）与重做（delta = +1）走同一条路径，保证两者行为对称 */
+  function stepHistory(delta) {
+    const next = state.historyIndex + delta;
+    if (next < 0 || next >= state.history.length) return false;
+
+    state.historyIndex = next;
+    state.placement = clonePlacement(state.history[next]);
+    disarmClear();
+    refresh(true); // 撤销/重做不算「玩家刚通关」，静默判定
+    return true;
+  }
+
+  function undo() {
+    return stepHistory(-1);
+  }
+
+  function redo() {
+    return stepHistory(1);
   }
 
   // ---------- 渲染 ----------
@@ -224,8 +315,34 @@
     commit();
   }
 
-  function clearBoard() {
+  let clearArmed = false;
+  let clearTimer = 0;
+
+  /** 复位「清空」的确认态；误触时到点自动复原，不打断玩家 */
+  function disarmClear() {
+    if (!clearArmed) return;
+    clearArmed = false;
+    if (clearTimer) {
+      clearTimeout(clearTimer);
+      clearTimer = 0;
+    }
+    dom.btnClear.textContent = "清空";
+    dom.btnClear.classList.remove("btn--danger");
+  }
+
+  /** 清空会一次性抹掉整个布局，因此要点两次 —— 第一次把按钮切成确认态 */
+  function requestClear() {
     if (state.placement.length === 0) return;
+
+    if (!clearArmed) {
+      clearArmed = true;
+      dom.btnClear.textContent = "确认清空？";
+      dom.btnClear.classList.add("btn--danger");
+      clearTimer = setTimeout(disarmClear, CLEAR_CONFIRM_MS);
+      return;
+    }
+
+    disarmClear();
     state.placement = [];
     commit();
   }
@@ -283,7 +400,11 @@
     dom.btnNext.disabled = !cleared;
 
     dom.hint.textContent = level.hint;
+
     dom.btnClear.disabled = state.placement.length === 0;
+    if (dom.btnClear.disabled) disarmClear();
+    dom.btnUndo.disabled = !canUndo();
+    dom.btnRedo.disabled = !canRedo();
 
     // 静默通关（进入关卡时目标就已被满足）不会有结算浮层，靠这一行给出反馈
     dom.status.hidden = !cleared;
@@ -483,12 +604,11 @@
     state.wasAllLit = false;
 
     buildToolbar(level);
-    recompute();
-    updateHud();
-    markDirty();
+    disarmClear();
+    resetHistory();
 
     // 进入关卡时静默判定一次：教学第 1 关不放元件就已通关，不该立刻弹结算
-    checkCompletion(true);
+    refresh(true);
   }
 
   // ---------- 输入 ----------
@@ -582,6 +702,23 @@
     }
 
     if (!dom.overlay.hidden) return;
+
+    // 撤销 / 重做必须先于「带修饰键一律忽略」那一层，否则会被整个拦掉
+    if (event.ctrlKey || event.metaKey) {
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (key === "y") {
+        event.preventDefault();
+        redo();
+        return;
+      }
+    }
+
     if (event.ctrlKey || event.metaKey || event.altKey) return;
 
     const cursor = state.cursor;
@@ -644,7 +781,9 @@
   // ---------- 装配 ----------
 
   dom.btnLevels.addEventListener("click", showLevelList);
-  dom.btnClear.addEventListener("click", clearBoard);
+  dom.btnClear.addEventListener("click", requestClear);
+  dom.btnUndo.addEventListener("click", undo);
+  dom.btnRedo.addEventListener("click", redo);
   dom.btnNext.addEventListener("click", () => {
     const nextId = levels.nextLevelId(state.levelId);
     if (nextId) selectLevel(nextId);
@@ -680,7 +819,9 @@
     handleCell,
     rotateAt,
     removeAt,
-    clearBoard,
+    requestClear,
+    undo,
+    redo,
     showLevelList,
     starText,
   };
