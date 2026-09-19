@@ -31,3 +31,8 @@ android/local.properties
 android/app/src/main/assets/
 *.apk
 *.keystore
+# 例外：安卓构建用的固定 debug 签名必须入库。
+# 若不入库，每台构建机都会自动生成随机 debug key，同一应用的新旧包签名不一致，
+# 用户侧会直接装不上新版本（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。
+# debug key 的密码是公开的（android / androiddebugkey），无保密价值，只需保持固定。
+!android/app/debug.keystore
