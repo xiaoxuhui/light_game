@@ -248,6 +248,102 @@ test("U01 结算浮层被关掉后，仍能从顶栏进入下一关", async ({ p
   expect((await readState(page)).levelId).toBe("t03");
 });
 
+// ---------- U07 撤销 / 重做 ----------
+
+/** 用键盘在 t02 放一面能通关的镜子 */
+async function placeSolvingMirror(page) {
+  await page.keyboard.press("1");
+  for (let i = 0; i < 6; i += 1) await page.keyboard.press("ArrowRight");
+  for (let i = 0; i < 4; i += 1) await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await settle(page);
+}
+
+test("U07 撤销与重做按钮按操作序列回退与前进", async ({ page }) => {
+  await openLevel(page, "t02");
+
+  const undo = page.locator("#btn-undo");
+  const redo = page.locator("#btn-redo");
+  await expect(undo).toBeDisabled();
+  await expect(redo).toBeDisabled();
+
+  await placeSolvingMirror(page);
+  expect((await readState(page)).placedCount).toBe(1);
+  await page.keyboard.press("Escape");
+
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  await settle(page);
+  let state = await readState(page);
+  expect(state.placedCount).toBe(0);
+  expect(state.allLit).toBe(false);
+  await expect(redo).toBeEnabled();
+
+  await redo.click();
+  await settle(page);
+  state = await readState(page);
+  expect(state.placedCount).toBe(1);
+  expect(state.allLit).toBe(true);
+});
+
+test("U07 Ctrl+Z 与 Ctrl+Shift+Z 走同一条撤销重做路径", async ({ page }) => {
+  await openLevel(page, "t02");
+  await placeSolvingMirror(page);
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.press("Control+z");
+  await settle(page);
+  expect((await readState(page)).placedCount).toBe(0);
+
+  await page.keyboard.press("Control+Shift+z");
+  await settle(page);
+  const state = await readState(page);
+  expect(state.placedCount).toBe(1);
+  expect(state.allLit).toBe(true);
+});
+
+test("U07 新操作会砍掉原来的重做分支", async ({ page }) => {
+  await openLevel(page, "t02");
+
+  await page.locator("#toolbar .tool").first().click();
+  const solving = await pointOf(page, 6, 4);
+  await page.mouse.click(solving.x, solving.y);
+  await settle(page);
+  expect((await readState(page)).placedCount).toBe(1);
+  await page.keyboard.press("Escape");
+
+  await page.locator("#btn-undo").click();
+  await settle(page);
+  expect((await readState(page)).placedCount).toBe(0);
+  await expect(page.locator("#btn-redo")).toBeEnabled();
+
+  // 撤销之后换个位置再放一个元件，重做链应当作废
+  const elsewhere = await pointOf(page, 6, 3);
+  await page.mouse.click(elsewhere.x, elsewhere.y);
+  await settle(page);
+
+  expect((await readState(page)).placedCount).toBe(1);
+  await expect(page.locator("#btn-redo")).toBeDisabled();
+});
+
+// ---------- 清空确认 ----------
+
+test("U02 清空要点两次才生效，第一次只切换到确认态", async ({ page }) => {
+  await openLevel(page, "t02");
+  await placeSolvingMirror(page);
+  await page.keyboard.press("Escape");
+
+  const clear = page.locator("#btn-clear");
+  await clear.click();
+  await expect(clear).toHaveText("确认清空？");
+  expect((await readState(page)).placedCount).toBe(1, "第一次点击不该真的清空");
+
+  await clear.click();
+  await settle(page);
+  expect((await readState(page)).placedCount).toBe(0);
+  await expect(clear).toHaveText("清空");
+});
+
 // ---------- 关卡导航 ----------
 
 test("关卡列表能切换到已解锁的关卡，未解锁的不可点", async ({ page }) => {
@@ -269,20 +365,18 @@ test("关卡列表能切换到已解锁的关卡，未解锁的不可点", async
   expect((await readState(page)).levelId).toBe("t01");
 });
 
-test("清空按钮只有在放了元件后才可用", async ({ page }) => {
+test("清空按钮只有在放了元件后才可用，且需要二次确认", async ({ page }) => {
   await openLevel(page, "t02");
 
   const clear = page.locator("#btn-clear");
   await expect(clear).toBeDisabled();
 
-  await page.keyboard.press("1");
-  for (let i = 0; i < 6; i += 1) await page.keyboard.press("ArrowRight");
-  for (let i = 0; i < 4; i += 1) await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
-  await settle(page);
-
+  await placeSolvingMirror(page);
   await expect(clear).toBeEnabled();
   await page.keyboard.press("Escape");
+
+  await clear.click();
+  expect((await readState(page)).placedCount).toBe(1, "第一次点击只是确认，不该真的清空");
   await clear.click();
   await settle(page);
 
