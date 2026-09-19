@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与网页内层背景一致，避免启动时闪白/闪灰（网页 --bg-deep: #08090c） -->
+    <color name="app_background">#08090C</color>
+    <!-- 网页主色（暖金 --accent: #ffd479），用于需要强调的系统界面 -->
+    <color name="app_accent">#FFD479</color>
+</resources>
