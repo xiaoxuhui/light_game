@@ -5,7 +5,7 @@
 
 - 包名：`com.xiaoxuhui.light`
 - 应用名：光的游戏
-- 版本：1.1.0（versionCode 1）
+- 版本：1.2.0（versionCode 2）—— 与网页版同一条版本线，`versionCode` 只增不减
 - minSdk 24（Android 7.0）/ targetSdk 34
 - 权限：**无**（完全离线，不申请网络权限）
 
@@ -56,6 +56,19 @@ gradlew.bat assembleDebug      # Windows
 推送到 `main` / `feat-**` / `feat-*` 且改动涉及 `android/**` 或网页资源时自动触发，
 也可在 Actions 页面手动运行 `Android APK` workflow。
 产物在 workflow 的 Artifacts 中下载（含 apk-sha256.txt）。
+
+### 4. 签名（动它之前务必读）
+
+`android/app/debug.keystore` **随仓库提交**，`build.gradle.kts` 里显式引用，
+密码是公开的 `android` / `androiddebugkey`。debug key 本身没有保密价值，
+**唯一重要的是它不能变** —— 换文件 = 换应用签名：
+
+- 所有已安装的用户都会**无法覆盖升级**，系统报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`
+- 只能让用户卸载后重装，而卸载会清掉本地存档（星数、每关布局、工作台快照）
+
+历史上正是踩了这个坑：未配 `signingConfig` 时 AGP 会为每台构建机自动生成**随机** debug key，
+而 GitHub Actions 每次都是全新 runner —— 每次发布的包签名都不同，用户侧表现为
+「有新版本，但一直更新不了」。`tests/android-shell.test.js` 有两条断言守着这条线。
 
 ## 说明
 
