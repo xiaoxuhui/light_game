@@ -21,8 +21,8 @@ android/
 │   ├── java/com/xiaoxuhui/light/
 │   │   └── MainActivity.kt           # WebView 外壳与 JS 桥
 │   └── res/                          # 图标、主题、备份规则
-├── icon-source/                      # 图标原图与去水印归档
-├── tools/make-icons.py               # 图标各密度生成脚本
+├── icon-source/                      # 图标生成结果归档（供应用商店等场合取用）
+├── tools/make-icons.py               # 图标绘制脚本（无图像模型，纯几何）
 └── gradle/wrapper/                   # Gradle wrapper
 ```
 
@@ -70,8 +70,10 @@ gradlew.bat assembleDebug      # Windows
   键盘快捷键（数字键、方向键、`Ctrl+Z`）在无物理键盘时不适用，但都有触摸等价路径。
 - **旋转与返回键**：Activity 声明 `configChanges`，旋转不重建、状态不丢；
   返回键优先回退网页历史，无历史时退出。
-- **图标重新生成**：把新原图放到 `icon-source/`（`icon-full.png`、`icon-foreground.png`），
-  再执行 `python tools/make-icons.py`（需要 Pillow）。脚本会先做对称裁剪去掉生成水印。
+- **图标是画出来的，不是生成的**：`tools/make-icons.py` 直接按游戏自己的配色与元件画法
+  绘制「白光射入 → 红/绿/蓝三束散出」。改图标就是改脚本里的配色与几何参数，
+  重新执行 `python tools/make-icons.py`（需要 Pillow）即可，输出完全可复现。
+  `icon-source/` 里放的是绘制结果，供应用商店等场合取用。
 
 ## 触摸端已知限制
 
