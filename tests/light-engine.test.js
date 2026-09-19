@@ -12,7 +12,7 @@ const engine = require("../scripts/light-engine.js");
 const { R, G, B } = core.COLOR;
 const { SLASH, BACKSLASH } = core.ORIENT;
 
-const noInventory = { mirror: 0, splitter: 0, dichroicR: 0, dichroicG: 0, dichroicB: 0 };
+const noInventory = { mirror: 0, splitter: 0, prism: 0 };
 
 /** 光段数量 */
 const segmentCount = (result) => result.segments.length;
@@ -49,8 +49,8 @@ const LEVEL_SPLIT = {
   inventory: { ...noInventory, splitter: 1 },
 };
 
-/** 需要二向色镜把黄光拆成红光与绿光，各自送到对应的目标 */
-const LEVEL_DICHROIC = {
+/** 需要棱镜把黄光拆成红光与绿光，各自送到对应的目标 */
+const LEVEL_PRISM = {
   cols: 5,
   rows: 3,
   fixed: [{ type: "emitter", x: 0, y: 2, dir: "right", color: R | G }],
@@ -58,7 +58,7 @@ const LEVEL_DICHROIC = {
     { x: 2, y: 0, require: R },
     { x: 4, y: 2, require: G },
   ],
-  inventory: { ...noInventory, dichroicR: 1 },
+  inventory: { ...noInventory, prism: 1 },
 };
 
 // ---------- 基本求解 ----------
@@ -115,23 +115,34 @@ test("分光镜关卡：不放分光镜时只有直射目标被点亮", () => {
   assert.equal(result.targets.find((target) => target.x === 3).lit, false);
 });
 
-test("二向色镜关卡：黄光被拆成红光与绿光分别命中目标", () => {
-  const unplaced = engine.solve(LEVEL_DICHROIC, []);
-  assert.equal(unplaced.allLit, false, "不放二向色镜时上方的红光目标不亮");
+test("棱镜关卡：黄光被拆成红光与绿光分别命中目标", () => {
+  const unplaced = engine.solve(LEVEL_PRISM, []);
+  assert.equal(unplaced.allLit, false, "不放棱镜时上方的红光目标不亮");
 
-  const placed = engine.solve(LEVEL_DICHROIC, [
-    { type: "dichroicR", x: 2, y: 2, orient: SLASH },
-  ]);
+  const placed = engine.solve(LEVEL_PRISM, [{ type: "prism", x: 2, y: 2, orient: 0 }]);
   assert.equal(placed.allLit, true);
   assert.deepEqual(
     placed.targets.find((target) => target.x === 2),
     { x: 2, y: 0, require: R, incoming: R, lit: true },
-    "反射束应是纯红光",
+    "左转束应是纯红光",
   );
   assert.deepEqual(
     placed.targets.find((target) => target.x === 4),
     { x: 4, y: 2, require: G, incoming: G, lit: true },
-    "透射束应是纯绿光",
+    "直行束应是纯绿光",
+  );
+});
+
+test("棱镜朝向 1：接上来的颜色换了位，两个目标都点不亮", () => {
+  // 朝向 1 是「左转 G / 直行 B / 右转 R」，黄光（R|G）里没有 B，所以只出两束：
+  // 绿光拐向上、红光向右转朝下去，于是上面那个目标收到的是绿而不是红。
+  const swapped = engine.solve(LEVEL_PRISM, [{ type: "prism", x: 2, y: 2, orient: 1 }]);
+  assert.equal(swapped.allLit, false, "朝向 1 下两个目标都收不到自己要的颜色");
+  assert.equal(swapped.targets.find((target) => target.x === 2).incoming, G, "上方的目标收到绿光");
+  assert.equal(
+    swapped.targets.find((target) => target.x === 4).incoming,
+    0,
+    "红光被甩向下方并出界，右侧目标什么都收不到",
   );
 });
 

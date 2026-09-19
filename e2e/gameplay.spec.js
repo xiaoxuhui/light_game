@@ -125,6 +125,35 @@ test("U02 按 R 旋转元件能改变光路（分光镜关卡）", async ({ page
   expect(state.overlayOpen).toBe(true);
 });
 
+test("U02 棱镜是三态朝向：按 R 依次轮转，只有一态能通关", async ({ page }) => {
+  await openLevel(page, "t04");
+
+  const orientOf = () => page.evaluate(() => window.__lightGame.state.placement[0].orient);
+
+  await page.keyboard.press("1"); // 棱镜（本关只发这一种元件）
+  for (let i = 0; i < 3; i += 1) await page.keyboard.press("ArrowRight");
+  for (let i = 0; i < 3; i += 1) await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await settle(page);
+
+  expect(await orientOf()).toBe(0);
+  expect((await readState(page)).allLit).toBe(true, "朝向 0：红光左转向上、绿光直行");
+
+  await page.keyboard.press("Escape"); // 结算浮层会拦掉按键，先关掉
+
+  const observed = [];
+  for (let i = 0; i < 3; i += 1) {
+    await page.keyboard.press("R");
+    await settle(page);
+    observed.push({ orient: await orientOf(), allLit: (await readState(page)).allLit });
+  }
+
+  expect(observed.map((item) => item.orient)).toEqual([1, 2, 0], "棱镜三态轮转后回到原态");
+  expect(observed[0].allLit).toBe(false, "朝向 1：绿光改走左转，红灯收不到");
+  expect(observed[1].allLit).toBe(false, "朝向 2：红光直行，上面的红灯同样收不到");
+  expect(observed[2].allLit).toBe(true, "转回朝向 0 又能通关");
+});
+
 test("U02 Delete 键能删掉光标处的元件", async ({ page }) => {
   await openLevel(page, "t02");
 
@@ -195,7 +224,7 @@ test("U09 窄屏下工具栏完整可点，画布仍可交互", async ({ page })
   await openLevel(page, "t04");
 
   const tools = page.locator("#toolbar .tool");
-  await expect(tools).toHaveCount(2); // 红二向色镜 + 橡皮
+  await expect(tools).toHaveCount(2); // 棱镜 + 橡皮
   await expect(tools.nth(0)).toBeVisible();
   await expect(tools.nth(1)).toBeVisible();
   await expect(page.locator("#stage")).toBeVisible();
@@ -581,7 +610,7 @@ function stressLevelFile() {
     par: 0,
     fixed: [{ type: "emitter", x: emitter.x, y: emitter.y, dir: "right", color: 1 }],
     targets: [{ x: target.x, y: target.y, require: 1 }],
-    inventory: { mirror: 0, splitter: 999, dichroicR: 0, dichroicG: 0, dichroicB: 0 },
+    inventory: { mirror: 0, splitter: 999, prism: 0 },
     hint: "压力测试关卡。",
     placement,
   });
@@ -628,7 +657,7 @@ test("U12 光路过载时给出警示提示，而不是无声地画一半", asyn
 
 test("U09 手机、平板与桌面三种视口下，工具栏都不遮挡网格", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 640 });
-  await openLevel(page, "e06"); // 工具栏项最多的一关：镜子 + 分光 + 红镜 + 橡皮
+  await openLevel(page, "e06"); // 工具栏项最多的一关：镜子 + 分光 + 棱镜 + 橡皮
 
   for (const [width, height] of [
     [360, 640],

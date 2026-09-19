@@ -288,16 +288,11 @@ body {
   background-size: 100% 100%, 100% 100%;
 }
 
-.tool[data-type="dichroicR"] .tool__glyph {
-  --glyph: #ff5f5f;
-}
-
-.tool[data-type="dichroicG"] .tool__glyph {
-  --glyph: #5ce08a;
-}
-
-.tool[data-type="dichroicB"] .tool__glyph {
-  --glyph: #5aa9ff;
+.tool[data-type="prism"] .tool__glyph {
+  /* 三颗色点：红在上、绿在右、蓝在下 —— 与画布上「光从左来时」的三路一致 */
+  background-image: radial-gradient(circle at 50% 8%, #ff5f5f 0 20%, transparent 21%),
+    radial-gradient(circle at 92% 50%, #5ce08a 0 20%, transparent 21%),
+    radial-gradient(circle at 50% 92%, #5aa9ff 0 20%, transparent 21%);
 }
 
 .tool__glyph--eraser {

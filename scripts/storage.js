@@ -86,7 +86,7 @@
         type: item.type,
         x: item.x,
         y: item.y,
-        orient: item.orient === core.ORIENT.BACKSLASH ? core.ORIENT.BACKSLASH : core.ORIENT.SLASH,
+        orient: core.normalizeOrient(item.type, item.orient),
       });
     }
 

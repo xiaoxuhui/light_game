@@ -137,9 +137,78 @@
     return ORIENT_LABELS[orient] || "?";
   }
 
-  /** 旋转：`/` 与 `\` 互相切换 */
+  /** 旋转：`/` 与 `\` 互相切换（仅用于 2 态元件） */
   function toggleOrient(orient) {
     return orient === ORIENT.SLASH ? ORIENT.BACKSLASH : ORIENT.SLASH;
+  }
+
+  /**
+   * 某个元件有几个朝向后。反射镜与分光镜是 2 态（`/` 与 `\`），棱镜是 3 态。
+   * 不可旋转的元件返回 1（调用方据此决定点击时是否循环）。
+   */
+  function orientStateCount(type) {
+    if (type === TILE.PRISM) return PRISM_STATES;
+    if (isRotatable(type)) return 2;
+    return 1;
+  }
+
+  /** 切到下一个朝向，按该元件的态数取模 */
+  function cycleOrient(type, orient) {
+    const count = orientStateCount(type);
+    const current = Number.isInteger(orient) ? orient : 0;
+    return (((current % count) + count + 1) % count);
+  }
+
+  // ---------- 棱镜 ----------
+
+  /** 棱镜的槽位数 = 朝向态数（左转 / 直行 / 右转 三个位置轮转） */
+  const PRISM_STATES = 3;
+
+  /** 三个槽位：0 = 相对入射方向左转 90°，1 = 直行，2 = 右转 90° */
+  const PRISM_SLOT_LEFT = 0;
+  const PRISM_SLOT_STRAIGHT = 1;
+  const PRISM_SLOT_RIGHT = 2;
+
+  /** 颜色分量按 R → G → B 的固定顺序排列，朝向只是把起点轮转一位 */
+  const PRISM_COLOR_CYCLE = Object.freeze([COLOR.R, COLOR.G, COLOR.B]);
+
+  /**
+   * 某个朝向下，三个槽位各坐哪个颜色分量。
+   * 朝向 0：左转 R / 直行 G / 右转 B；朝向 1：左转 G / 直行 B / 右转 R；
+   * 朝向 2：左转 B / 直行 R / 右转 G。
+   * @returns {number[]} 长度为 3 的颜色掩码数组，下标即槽位
+   */
+  function prismSlots(orient) {
+    const base = ((Number.isInteger(orient) ? orient : 0) % PRISM_STATES + PRISM_STATES) % PRISM_STATES;
+    const slots = new Array(PRISM_STATES);
+    for (let index = 0; index < PRISM_COLOR_CYCLE.length; index += 1) {
+      slots[(index - base + PRISM_STATES) % PRISM_STATES] = PRISM_COLOR_CYCLE[index];
+    }
+    return slots;
+  }
+
+  /** 某个颜色分量在棱镜里走哪个槽位（-1 表示该颜色不在棱镜的循环里） */
+  function prismSlotOfColor(orient, color) {
+    const slots = prismSlots(orient);
+    for (let slot = 0; slot < slots.length; slot += 1) {
+      if (slots[slot] === color) return slot;
+    }
+    return -1;
+  }
+
+  /** 槽位 → 出射方向索引：左转 (i−2)，直行 i，右转 (i+2) */
+  function prismOutDirection(entryIndex, slot) {
+    if (entryIndex < 0) return -1;
+    if (slot === PRISM_SLOT_LEFT) return (entryIndex + 6) % 8;
+    if (slot === PRISM_SLOT_RIGHT) return (entryIndex + 2) % 8;
+    return entryIndex;
+  }
+
+  /** 把外部传入的朝向收敛到该元件的合法范围（引擎、存档、关卡校验共用） */
+  function normalizeOrient(type, orient) {
+    const count = orientStateCount(type);
+    const value = Number.isInteger(orient) ? orient : 0;
+    return ((value % count) + count) % count;
   }
 
   /**
@@ -168,37 +237,21 @@
     EMITTER: "emitter",
     MIRROR: "mirror",
     SPLITTER: "splitter",
-    DICHROIC_R: "dichroicR",
-    DICHROIC_G: "dichroicG",
-    DICHROIC_B: "dichroicB",
+    PRISM: "prism",
     WALL: "wall",
     TARGET: "target",
   });
 
   /** 玩家可以放置的元件（也是关卡 inventory 的键） */
-  const PLACEABLE_TYPES = Object.freeze(["mirror", "splitter", "dichroicR", "dichroicG", "dichroicB"]);
+  const PLACEABLE_TYPES = Object.freeze(["mirror", "splitter", "prism"]);
 
   /** 关卡预设、不可移动不可删除的元件 */
   const FIXED_TYPES = Object.freeze(["emitter", "wall"]);
 
   const ALL_TILE_TYPES = Object.freeze([...PLACEABLE_TYPES, ...FIXED_TYPES, TILE.TARGET]);
 
-  const DICHROIC_MASKS = Object.freeze({
-    dichroicR: COLOR.R,
-    dichroicG: COLOR.G,
-    dichroicB: COLOR.B,
-  });
-
-  function isDichroic(type) {
-    return Object.prototype.hasOwnProperty.call(DICHROIC_MASKS, type);
-  }
-
-  function dichroicMask(type) {
-    return DICHROIC_MASKS[type] || 0;
-  }
-
   function isRotatable(type) {
-    return type === TILE.MIRROR || type === TILE.SPLITTER || isDichroic(type);
+    return type === TILE.MIRROR || type === TILE.SPLITTER || type === TILE.PRISM;
   }
 
   function isPlaceable(type) {
@@ -235,19 +288,21 @@
       ];
     }
 
-    if (isDichroic(type)) {
-      // 按掩码拆分：镜面吃掉指定颜色，其余透射。
-      // 复合色光（如 Y = R|G）因此会自然分成两束，不需要额外规则。
-      const mask = dichroicMask(type);
+    if (type === TILE.PRISM) {
+      // 按颜色掩码拆成 R/G/B 三个分量，各自走自己的槽位（左转 / 直行 / 右转）。
+      // 每个分量只有一个出口 —— 这与分光镜正相反：分光镜能把同一种颜色变成两束，棱镜永远不能。
+      // 缺哪个分量就不出哪一束，因此黄光只出两束、纯红光只出一束。
+      const entryIndex = directionIndexFromVector(dx, dy);
+      if (entryIndex < 0) return [];
+      const slots = prismSlots(orient);
       const out = [];
-      const reflectedColor = color & mask;
-      const passedColor = color & ~mask;
-      if (reflectedColor !== 0) {
-        const reflected = reflectVector(dx, dy, orient);
-        out.push({ dx: reflected.dx, dy: reflected.dy, color: reflectedColor });
-      }
-      if (passedColor !== 0) {
-        out.push({ dx, dy, color: passedColor });
+      for (let slot = 0; slot < slots.length; slot += 1) {
+        const component = color & slots[slot];
+        if (component === 0) continue;
+        const outIndex = prismOutDirection(entryIndex, slot);
+        const direction = DIRECTIONS[outIndex];
+        if (!direction) continue;
+        out.push({ dx: direction.dx, dy: direction.dy, color: component });
       }
       return out;
     }
@@ -278,10 +333,18 @@
     combineColors,
     orientLabel,
     toggleOrient,
+    orientStateCount,
+    cycleOrient,
+    PRISM_STATES,
+    PRISM_SLOT_LEFT,
+    PRISM_SLOT_STRAIGHT,
+    PRISM_SLOT_RIGHT,
+    prismSlots,
+    prismSlotOfColor,
+    prismOutDirection,
+    normalizeOrient,
     reflectVector,
     reflectDirection,
-    isDichroic,
-    dichroicMask,
     isRotatable,
     isPlaceable,
     stopsLight,

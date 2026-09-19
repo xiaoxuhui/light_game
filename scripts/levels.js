@@ -37,9 +37,7 @@
   const NO_INVENTORY = Object.freeze({
     mirror: 0,
     splitter: 0,
-    dichroicR: 0,
-    dichroicG: 0,
-    dichroicB: 0,
+    prism: 0,
   });
 
   // 颜色掩码（见 light-core.js）。写成常量而不是裸数字，
@@ -53,7 +51,7 @@
   const C_W = C_R | C_G | C_B;
 
   // ---------- 第 0 章 · 教学 ----------
-  // 依次引入：直射 → 反射镜 → 分光镜 → 二向色镜。每关只教一件事。
+  // 依次引入：直射 → 反射镜 → 分光镜 → 棱镜。每关只教一件事。
 
   const LEVELS = [
     {
@@ -115,12 +113,12 @@
         { x: 3, y: 0, require: C_R },
         { x: 5, y: 3, require: C_G },
       ],
-      inventory: { ...NO_INVENTORY, dichroicR: 1 },
-      hint: "这道光是红与绿的混合。红二向色镜会拦下红光、放过绿光。",
+      inventory: { ...NO_INVENTORY, prism: 1 },
+      hint: "黄光是红与绿混在一起的光。棱镜把红光甩向左转的方向、绿光留在直行方向 —— 一个元件就拆开了两种颜色。",
     },
 
     // ---------- 第 1 章 · 颜色 ----------
-    // 引入拆分与合成：二向色镜按颜色分离，多束光可以在同一目标处叠加。
+    // 引入拆分与合成：棱镜按颜色分量分向，多束光可以在同一目标处叠加。
 
     {
       schema: SCHEMA,
@@ -130,14 +128,14 @@
       chapter: 1,
       cols: 8,
       rows: 5,
-      par: 1,
+      par: 3,
       fixed: [{ type: "emitter", x: 0, y: 2, dir: "right", color: C_W }],
       targets: [
         { x: 7, y: 2, require: C_C },
         { x: 2, y: 0, require: C_R },
       ],
-      inventory: { ...NO_INVENTORY, dichroicR: 2, mirror: 1 },
-      hint: "白光里同时有红与绿。红二向色镜把红光反射出去，让其余颜色继续前进。",
+      inventory: { ...NO_INVENTORY, prism: 3, mirror: 2 },
+      hint: "棱镜把白光拆成三束：红向左转、绿直行、蓝向右转。右边那个目标要的是青（绿加蓝），所以拆出来的两束都得送到它那里。",
     },
     {
       schema: SCHEMA,
@@ -164,15 +162,15 @@
       chapter: 1,
       cols: 8,
       rows: 5,
-      par: 2,
+      par: 3,
       fixed: [{ type: "emitter", x: 0, y: 2, dir: "right", color: C_W }],
       targets: [
         { x: 2, y: 0, require: C_R },
         { x: 4, y: 0, require: C_G },
         { x: 7, y: 2, require: C_B },
       ],
-      inventory: { ...NO_INVENTORY, dichroicR: 2, dichroicG: 2 },
-      hint: "白光可以连拆两次：先取出红，再取出绿，剩下的就是蓝。",
+      inventory: { ...NO_INVENTORY, prism: 3, mirror: 4 },
+      hint: "棱镜一束白光出三束，三种颜色各去一个方向。绿色拐上去、蓝色继续向右，红光得绕一圈才能回到最上面那个目标。",
     },
     {
       schema: SCHEMA,
@@ -182,7 +180,7 @@
       chapter: 1,
       cols: 9,
       rows: 6,
-      par: 2,
+      par: 4,
       fixed: [
         { type: "emitter", x: 0, y: 1, dir: "right", color: C_W },
         { type: "wall", x: 5, y: 1 },
@@ -191,25 +189,25 @@
         { x: 0, y: 3, require: C_R },
         { x: 4, y: 5, require: C_C },
       ],
-      inventory: { ...NO_INVENTORY, mirror: 3, dichroicR: 2 },
-      hint: "墙会吃掉光。在撞上它之前拐弯，再把白光拆开。",
+      inventory: { ...NO_INVENTORY, mirror: 4, prism: 3 },
+      hint: "墙会吃掉光，所以要先拐弯再拆色。红灯在西边，青灯在南边 —— 绿色和蓝色得汇到同一个目标上。",
     },
     {
       schema: SCHEMA,
       version: SCHEMA_VERSION,
       id: "c05",
-      title: "绿镜的名堂",
+      title: "品红与绿",
       chapter: 1,
       cols: 8,
       rows: 6,
-      par: 2,
+      par: 4,
       fixed: [{ type: "emitter", x: 0, y: 5, dir: "right", color: C_W }],
       targets: [
         { x: 2, y: 0, require: C_M },
         { x: 7, y: 2, require: C_G },
       ],
-      inventory: { ...NO_INVENTORY, mirror: 3, dichroicG: 2 },
-      hint: "绿二向色镜反射绿、放过其余颜色。这次留下来的是品红。",
+      inventory: { ...NO_INVENTORY, mirror: 4, prism: 3 },
+      hint: "品红是红加蓝：让红光直着上去，蓝光绕出去再折回来，两者在同一个目标上会合。绿光则直接向右。",
     },
     {
       schema: SCHEMA,
@@ -219,7 +217,7 @@
       chapter: 1,
       cols: 9,
       rows: 6,
-      par: 2,
+      par: 4,
       fixed: [
         { type: "emitter", x: 0, y: 5, dir: "right", color: C_W },
         { type: "emitter", x: 8, y: 0, dir: "down", color: C_B },
@@ -229,7 +227,7 @@
         { x: 4, y: 0, require: C_C },
         { x: 8, y: 3, require: C_M },
       ],
-      inventory: { ...NO_INVENTORY, mirror: 3, dichroicR: 2 },
+      inventory: { ...NO_INVENTORY, mirror: 4, prism: 3 },
       hint: "红来自白光，蓝来自另一侧的光源。让它们在同一个目标上会合。",
     },
 
@@ -269,7 +267,7 @@
         { x: 7, y: 0, require: C_R },
         { x: 9, y: 2, require: C_C },
       ],
-      inventory: { ...NO_INVENTORY, splitter: 2, dichroicR: 2 },
+      inventory: { ...NO_INVENTORY, splitter: 2, prism: 2, mirror: 2 },
       hint: "先用分光镜把白光分成两路，再在其中一路上拆颜色。",
     },
     {
@@ -352,7 +350,7 @@
         { x: 8, y: 0, require: C_R },
         { x: 11, y: 1, require: C_R },
       ],
-      inventory: { ...NO_INVENTORY, mirror: 3, splitter: 3, dichroicR: 2 },
+      inventory: { ...NO_INVENTORY, mirror: 3, splitter: 3, prism: 2 },
       hint: "最后一道题：拐弯、拆色、再分光，一个都不能少。",
     },
   ];
@@ -514,10 +512,9 @@
       }
       if (
         item.orient !== undefined &&
-        item.orient !== core.ORIENT.SLASH &&
-        item.orient !== core.ORIENT.BACKSLASH
+        (!isInt(item.orient) || item.orient < 0 || item.orient >= core.orientStateCount(item.type))
       ) {
-        errors.push(where + ".orient 只能是 0 或 1");
+        errors.push(where + ".orient 超出该元件的朝向范围（0–" + (core.orientStateCount(item.type) - 1) + "）");
         return;
       }
 

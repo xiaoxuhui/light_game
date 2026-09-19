@@ -94,7 +94,7 @@
       }
       setCell(grid, item.x, item.y, {
         type: item.type,
-        orient: item.orient === core.ORIENT.BACKSLASH ? core.ORIENT.BACKSLASH : core.ORIENT.SLASH,
+        orient: core.normalizeOrient(item.type, item.orient),
         fixed: false,
       });
       placedCount += 1;

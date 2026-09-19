@@ -37,9 +37,7 @@
   const TYPE_NAMES = {
     mirror: "反射镜",
     splitter: "分光镜",
-    dichroicR: "红镜",
-    dichroicG: "绿镜",
-    dichroicB: "蓝镜",
+    prism: "棱镜",
     [ERASER]: "橡皮",
   };
 
@@ -339,7 +337,8 @@
   function rotateAt(x, y) {
     const item = findPlacement(x, y);
     if (!item || !core.isRotatable(item.type)) return;
-    item.orient = core.toggleOrient(item.orient);
+    // 态数由元件决定：反射镜 / 分光镜 2 态，棱镜 3 态
+    item.orient = core.cycleOrient(item.type, item.orient);
     commit();
   }
 

@@ -12,34 +12,45 @@ const levels = require("../scripts/levels.js");
 
 const { SLASH, BACKSLASH } = core.ORIENT;
 
-/** 每关的参考解。既验证 par 可达，也验证 par 是局部最优；全量最小性由穷举另行确认。 */
+/** 每关的参考解。既验证 par 可达，也验证 par 是局部最优；全量最小性由 `npm run verify:par` 穷举确认。 */
 const REFERENCE_SOLUTIONS = {
   t01: [],
   t02: [{ type: "mirror", x: 6, y: 4, orient: SLASH }],
   t03: [{ type: "splitter", x: 3, y: 3, orient: BACKSLASH }],
-  t04: [{ type: "dichroicR", x: 3, y: 3, orient: SLASH }],
+  t04: [{ type: "prism", x: 3, y: 3, orient: 0 }],
 
-  // 第 1 章 · 颜色
-  c01: [{ type: "dichroicR", x: 2, y: 2, orient: SLASH }],
+  // 第 1 章 · 颜色（本章不发分光镜：要分束就只能靠棱镜）
+  c01: [
+    { type: "prism", x: 2, y: 2, orient: 0 },
+    { type: "mirror", x: 2, y: 3, orient: BACKSLASH },
+    { type: "prism", x: 7, y: 3, orient: 2 },
+  ],
   c02: [
     { type: "mirror", x: 6, y: 4, orient: SLASH },
     { type: "mirror", x: 2, y: 2, orient: BACKSLASH },
   ],
   c03: [
-    { type: "dichroicR", x: 2, y: 2, orient: SLASH },
-    { type: "dichroicG", x: 4, y: 2, orient: SLASH },
+    { type: "prism", x: 4, y: 2, orient: 1 },
+    { type: "mirror", x: 4, y: 3, orient: SLASH },
+    { type: "mirror", x: 2, y: 3, orient: BACKSLASH },
   ],
   c04: [
-    { type: "mirror", x: 4, y: 1, orient: BACKSLASH },
-    { type: "dichroicR", x: 4, y: 3, orient: SLASH },
+    { type: "mirror", x: 1, y: 1, orient: BACKSLASH },
+    { type: "prism", x: 1, y: 3, orient: 1 },
+    { type: "mirror", x: 4, y: 3, orient: BACKSLASH },
+    { type: "mirror", x: 1, y: 5, orient: BACKSLASH },
   ],
   c05: [
     { type: "mirror", x: 2, y: 5, orient: SLASH },
-    { type: "dichroicG", x: 2, y: 2, orient: SLASH },
+    { type: "prism", x: 2, y: 2, orient: 2 },
+    { type: "mirror", x: 0, y: 2, orient: BACKSLASH },
+    { type: "mirror", x: 0, y: 0, orient: SLASH },
   ],
   c06: [
     { type: "mirror", x: 4, y: 5, orient: SLASH },
-    { type: "dichroicR", x: 4, y: 3, orient: SLASH },
+    { type: "prism", x: 4, y: 3, orient: 1 },
+    { type: "mirror", x: 0, y: 3, orient: BACKSLASH },
+    { type: "mirror", x: 0, y: 0, orient: SLASH },
   ],
 
   // 第 2 章 · 精算
@@ -49,7 +60,7 @@ const REFERENCE_SOLUTIONS = {
   ],
   e02: [
     { type: "splitter", x: 4, y: 2, orient: SLASH },
-    { type: "dichroicR", x: 7, y: 2, orient: SLASH },
+    { type: "splitter", x: 7, y: 2, orient: SLASH },
   ],
   e03: [
     { type: "mirror", x: 4, y: 0, orient: BACKSLASH },
@@ -65,7 +76,7 @@ const REFERENCE_SOLUTIONS = {
   ],
   e06: [
     { type: "mirror", x: 5, y: 2, orient: SLASH },
-    { type: "dichroicR", x: 5, y: 1, orient: SLASH },
+    { type: "splitter", x: 5, y: 1, orient: SLASH },
     { type: "splitter", x: 8, y: 1, orient: SLASH },
   ],
 };
@@ -153,7 +164,7 @@ test("T14 关卡里的元件配额足够摆出参考解", () => {
   }
 });
 
-test("T14 教学关按「直射 → 反射 → 分光 → 二向色」的顺序引入元件", () => {
+test("T14 教学关按「直射 → 反射 → 分光 → 棱镜」的顺序引入元件", () => {
   const teaching = levels.listLevels().filter((level) => level.chapter === 0);
 
   assert.equal(teaching[0].id, "t01");
@@ -165,7 +176,73 @@ test("T14 教学关按「直射 → 反射 → 分光 → 二向色」的顺序�
 
   assert.ok(teaching[1].inventory.mirror > 0, "第 2 关应引入反射镜");
   assert.ok(teaching[2].inventory.splitter > 0, "第 3 关应引入分光镜");
-  assert.equal(teaching[3].inventory.dichroicR, 1, "第 4 关应引入红二向色镜");
+  assert.ok(teaching[3].inventory.prism > 0, "第 4 关应引入棱镜");
+});
+
+test("T14 颜色章不发分光镜，「一束光喂多个目标」就只能靠棱镜", () => {
+  const colourChapter = levels.listLevels().filter((level) => level.chapter === 1);
+  assert.equal(colourChapter.length, 6);
+
+  for (const level of colourChapter) {
+    assert.equal(
+      level.inventory.splitter,
+      0,
+      `${level.id} 若发分光镜，「把白光分两路」就成了更省元件的解法，棱镜会被绕开`,
+    );
+  }
+
+  // 单光源关：一条光路只够点亮一个目标（光会被目标吸收），所以必须靠棱镜分束
+  const singleSource = colourChapter.filter(
+    (level) => level.fixed.filter((item) => item.type === "emitter").length === 1,
+  );
+  assert.ok(singleSource.length >= 3, "颜色章应以单光源关为主");
+
+  for (const level of singleSource) {
+    assert.ok(level.targets.length >= 2, `${level.id} 是单光源关，目标应当不止一个`);
+    assert.ok(level.inventory.prism > 0, `${level.id} 需要棱镜来分束`);
+    assert.ok(
+      REFERENCE_SOLUTIONS[level.id].some((item) => item.type === "prism"),
+      `${level.id} 的参考解必须用到棱镜`,
+    );
+  }
+});
+
+test("T14 结构性前提：没有分光镜与棱镜时，一束光最多点亮一个目标", () => {
+  // 光被目标吸收、不会穿过去继续走，所以「只有反射镜」时一个光源只能照亮一条路径。
+  // 颜色章的单光源关卡因此绕不开棱镜 —— 这条不变量就是上面那个断言的依据。
+  const level = {
+    cols: 7,
+    rows: 3,
+    fixed: [{ type: "emitter", x: 0, y: 1, dir: "right", color: 7 }],
+    targets: [
+      { x: 6, y: 1, require: core.COLOR.G },
+      { x: 3, y: 0, require: core.COLOR.R },
+    ],
+    inventory: { mirror: 4, splitter: 0, prism: 0 },
+  };
+
+  const mirrorOnly = [
+    [],
+    [{ type: "mirror", x: 3, y: 1, orient: 0 }],
+    [{ type: "mirror", x: 3, y: 1, orient: 1 }],
+    [
+      { type: "mirror", x: 2, y: 1, orient: 0 },
+      { type: "mirror", x: 2, y: 0, orient: 1 },
+    ],
+  ];
+
+  for (const placement of mirrorOnly) {
+    const result = engine.solve(level, placement);
+    const lit = result.targets.filter((target) => target.lit).length;
+    assert.ok(lit <= 1, "只有反射镜时最多点亮一个目标");
+    assert.equal(result.allLit, false, "一个光源喂不饱两个目标");
+  }
+
+  const withPrism = engine.solve(
+    { ...level, inventory: { mirror: 4, splitter: 0, prism: 1 } },
+    [{ type: "prism", x: 3, y: 1, orient: 0 }],
+  );
+  assert.equal(withPrism.allLit, true, "棱镜把白光分成两路，两个目标同时点亮");
 });
 
 test("T14 章节按 chapter 自动分组，且顺序递增", () => {

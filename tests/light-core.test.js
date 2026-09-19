@@ -141,61 +141,120 @@ test("T08 分光镜在两种朝向下都产生两束且其中一束始终保持�
   }
 });
 
-// ---------- T09：二向色镜 ----------
+// ---------- T09：棱镜 ----------
+//
+// 朝向 0 的三槽位是「左转 R / 直行 G / 右转 B」；
+// 对向右传播的光，左转 = 上（dir 0）、直行 = 右（dir 2）、右转 = 下（dir 4）。
 
-test("T09 二向色镜：只反射指定颜色", () => {
-  const outgoing = core.transmit(core.TILE.DICHROIC_R, BACKSLASH, 1, 0, R);
+test("T09 棱镜：白光向右入射拆成三束，各走左转 / 直行 / 右转", () => {
+  const outgoing = core.transmit(core.TILE.PRISM, 0, 1, 0, R | G | B);
 
-  assert.equal(outgoing.length, 1, "纯红光打红二向色镜只应反射出一束");
-  assert.deepEqual(outgoing[0], { dx: 0, dy: 1, color: R });
+  assert.equal(outgoing.length, 3, "白光进棱镜应出三束");
+  assert.deepEqual(outgoing.find((beam) => beam.color === R), { dx: 0, dy: -1, color: R }, "红光左转（向上）");
+  assert.deepEqual(outgoing.find((beam) => beam.color === G), { dx: 1, dy: 0, color: G }, "绿光直行（向右）");
+  assert.deepEqual(outgoing.find((beam) => beam.color === B), { dx: 0, dy: 1, color: B }, "蓝光右转（向下）");
 });
 
-test("T09 二向色镜：非指定颜色全部透射", () => {
-  const outgoing = core.transmit(core.TILE.DICHROIC_R, BACKSLASH, 1, 0, G);
-
-  assert.equal(outgoing.length, 1, "纯绿光打红二向色镜只应透射一束");
-  assert.deepEqual(outgoing[0], { dx: 1, dy: 0, color: G });
-});
-
-test("T09 二向色镜：复合色光被拆成反射与透射两束", () => {
-  const outYellow = core.transmit(core.TILE.DICHROIC_R, BACKSLASH, 1, 0, R | G);
-  assert.equal(outYellow.length, 2, "黄光（R|G）打红二向色镜应被拆成两束");
-  assert.deepEqual(
-    outYellow.find((beam) => beam.dy === 1 && beam.dx === 0),
-    { dx: 0, dy: 1, color: R },
-    "反射束应是红光",
-  );
-  assert.deepEqual(
-    outYellow.find((beam) => beam.dx === 1 && beam.dy === 0),
-    { dx: 1, dy: 0, color: G },
-    "透射束应是绿光",
-  );
-
-  const outWhite = core.transmit(core.TILE.DICHROIC_R, BACKSLASH, 1, 0, R | G | B);
-  assert.deepEqual(outWhite.find((beam) => beam.dy === 1), { dx: 0, dy: 1, color: R });
-  assert.deepEqual(
-    outWhite.find((beam) => beam.dy === 0),
-    { dx: 1, dy: 0, color: G | B },
-    "白光打红二向色镜，透射束应是青（G|B）",
-  );
-});
-
-test("T09 三种二向色镜各自只拦下自己的颜色", () => {
-  const expectations = [
-    { type: core.TILE.DICHROIC_R, mask: R },
-    { type: core.TILE.DICHROIC_G, mask: G },
-    { type: core.TILE.DICHROIC_B, mask: B },
+test("T09 棱镜：朝向轮转改变「哪个颜色走直行」", () => {
+  const cases = [
+    { orient: 0, straight: G, left: R, right: B },
+    { orient: 1, straight: B, left: G, right: R },
+    { orient: 2, straight: R, left: B, right: G },
   ];
 
-  for (const item of expectations) {
-    assert.equal(core.dichroicMask(item.type), item.mask);
-    const outgoing = core.transmit(item.type, SLASH, 1, 0, 7);
-    const reflected = outgoing.find((beam) => beam.dy !== 0 || beam.dx !== 1);
-    assert.ok(reflected, `${item.type} 应反射出自己那一色`);
-    assert.equal(reflected.color, item.mask);
-    const passed = outgoing.find((beam) => beam.dx === 1 && beam.dy === 0);
-    assert.equal(passed.color, 7 & ~item.mask, `${item.type} 透射束应滤掉自己那一色`);
+  for (const item of cases) {
+    const outgoing = core.transmit(core.TILE.PRISM, item.orient, 1, 0, R | G | B);
+    assert.equal(outgoing.length, 3, `朝向 ${item.orient} 应出三束`);
+    assert.deepEqual(
+      outgoing.find((beam) => beam.color === item.straight),
+      { dx: 1, dy: 0, color: item.straight },
+      `朝向 ${item.orient}：${core.colorLabel(item.straight)} 应直行`,
+    );
+    assert.deepEqual(
+      outgoing.find((beam) => beam.color === item.left),
+      { dx: 0, dy: -1, color: item.left },
+      `朝向 ${item.orient}：${core.colorLabel(item.left)} 应左转`,
+    );
+    assert.deepEqual(
+      outgoing.find((beam) => beam.color === item.right),
+      { dx: 0, dy: 1, color: item.right },
+      `朝向 ${item.orient}：${core.colorLabel(item.right)} 应右转`,
+    );
   }
+});
+
+test("T09 棱镜：缺哪个分量就不出哪一束", () => {
+  const redOnly = core.transmit(core.TILE.PRISM, 0, 1, 0, R);
+  assert.equal(redOnly.length, 1, "纯红光进棱镜只出一束");
+  assert.deepEqual(redOnly[0], { dx: 0, dy: -1, color: R });
+
+  const yellow = core.transmit(core.TILE.PRISM, 0, 1, 0, R | G);
+  assert.equal(yellow.length, 2, "黄光（R|G）进棱镜出两束");
+  assert.deepEqual(yellow.find((beam) => beam.color === R), { dx: 0, dy: -1, color: R });
+  assert.deepEqual(yellow.find((beam) => beam.color === G), { dx: 1, dy: 0, color: G });
+
+  const cyan = core.transmit(core.TILE.PRISM, 0, 1, 0, G | B);
+  assert.equal(cyan.length, 2, "青光（G|B）进棱镜出两束");
+
+  assert.deepEqual(core.transmit(core.TILE.PRISM, 0, 1, 0, 0), [], "没有光就没有出射");
+});
+
+test("T09 棱镜永远不会把同一种颜色变成两束（这是它与分光镜的分界）", () => {
+  for (let orient = 0; orient < core.PRISM_STATES; orient += 1) {
+    for (let index = 0; index < core.DIRECTIONS.length; index += 1) {
+      const incoming = core.DIRECTIONS[index];
+      const outgoing = core.transmit(core.TILE.PRISM, orient, incoming.dx, incoming.dy, R | G | B);
+      const colors = outgoing.map((beam) => beam.color);
+      assert.equal(
+        new Set(colors).size,
+        colors.length,
+        "同一颜色不许出现两次出射",
+      );
+      assert.equal(new Set(colors).size, 3, "三色各出一束");
+    }
+  }
+
+  // 对照：分光镜同一颜色确实会出两束
+  const split = core.transmit(core.TILE.SPLITTER, SLASH, 1, 0, R);
+  assert.equal(split.length, 2);
+  assert.equal(split[0].color, split[1].color);
+});
+
+test("T09 棱镜：各入射方向的三个出射互不相同且都合法", () => {
+  for (let index = 0; index < core.DIRECTIONS.length; index += 1) {
+    const incoming = core.DIRECTIONS[index];
+    const outgoing = core.transmit(core.TILE.PRISM, 0, incoming.dx, incoming.dy, 7);
+    const indexes = outgoing.map((beam) => core.directionIndexFromVector(beam.dx, beam.dy));
+    assert.equal(new Set(indexes).size, 3, `${core.DIRECTION_NAMES[index]} 入射的三束方向应互不相同`);
+    for (const value of indexes) assert.ok(value >= 0, "出射方向必须合法");
+  }
+});
+
+test("T09 棱镜朝向工具：槽位表、态数、轮转与归一", () => {
+  assert.equal(core.PRISM_STATES, 3);
+  assert.deepEqual(core.prismSlots(0), [R, G, B]);
+  assert.deepEqual(core.prismSlots(1), [G, B, R]);
+  assert.deepEqual(core.prismSlots(2), [B, R, G]);
+  assert.deepEqual(core.prismSlots(3), core.prismSlots(0), "朝向对 3 取模");
+  assert.deepEqual(core.prismSlots(-1), core.prismSlots(2), "负朝向也能归一");
+
+  assert.equal(core.prismSlotOfColor(0, R), core.PRISM_SLOT_LEFT);
+  assert.equal(core.prismSlotOfColor(0, G), core.PRISM_SLOT_STRAIGHT);
+  assert.equal(core.prismSlotOfColor(0, B), core.PRISM_SLOT_RIGHT);
+  assert.equal(core.prismSlotOfColor(1, G), core.PRISM_SLOT_LEFT);
+
+  assert.equal(core.orientStateCount(core.TILE.PRISM), 3);
+  assert.equal(core.orientStateCount(core.TILE.MIRROR), 2);
+  assert.equal(core.orientStateCount(core.TILE.SPLITTER), 2);
+  assert.equal(core.orientStateCount(core.TILE.EMITTER), 1);
+
+  assert.equal(core.cycleOrient(core.TILE.PRISM, 0), 1);
+  assert.equal(core.cycleOrient(core.TILE.PRISM, 2), 0, "棱镜三态循环");
+  assert.equal(core.cycleOrient(core.TILE.MIRROR, 1), 0, "反射镜两态循环");
+
+  assert.equal(core.normalizeOrient(core.TILE.PRISM, 1), 1);
+  assert.equal(core.normalizeOrient(core.TILE.MIRROR, 1), 1);
+  assert.equal(core.normalizeOrient(core.TILE.PRISM, undefined), 0);
 });
 
 // ---------- T10：颜色掩码 ----------
@@ -243,8 +302,8 @@ test("方向工具：正反、索引与命名互查", () => {
   assert.equal(core.isDiagonal(core.toDirectionIndex("up")), false);
 });
 
-test("元件分类：可放置、可旋转、二向色镜判定正确", () => {
-  assert.deepEqual(core.PLACEABLE_TYPES, ["mirror", "splitter", "dichroicR", "dichroicG", "dichroicB"]);
+test("元件分类：可放置、可旋转判定正确", () => {
+  assert.deepEqual(core.PLACEABLE_TYPES, ["mirror", "splitter", "prism"]);
   assert.deepEqual(core.FIXED_TYPES, ["emitter", "wall"]);
 
   for (const type of core.PLACEABLE_TYPES) {
@@ -255,8 +314,8 @@ test("元件分类：可放置、可旋转、二向色镜判定正确", () => {
   assert.equal(core.isPlaceable("emitter"), false, "光源不可放置");
   assert.equal(core.isRotatable(core.TILE.EMITTER), false, "光源不可旋转");
   assert.equal(core.isRotatable(core.TILE.WALL), false, "墙体不可旋转");
-  assert.equal(core.isDichroic(core.TILE.MIRROR), false);
-  assert.equal(core.isDichroic(core.TILE.DICHROIC_B), true);
+  assert.equal(core.isPlaceable("dichroicR"), false, "二向色镜已移除，不再是可放置元件");
+  assert.equal(core.TILE.DICHROIC_R, undefined, "TILE 里不该再有二向色镜常量");
   assert.ok(core.ALL_TILE_TYPES.indexOf(core.TILE.TARGET) !== -1);
 });
 

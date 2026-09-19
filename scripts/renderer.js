@@ -277,17 +277,51 @@
     slashPath(ctx, shifted.x, shifted.y, layout.cell * 0.24, orient);
   }
 
-  function drawDichroic(ctx, layout, center, orient, mask) {
-    const color = beamColor(mask);
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(2, layout.cell * 0.075);
-    slashPath(ctx, center.x, center.y, layout.cell * 0.3, orient);
+  /**
+   * 棱镜：三角形本体 + 三颗色点。
+   * 色点摆在该颜色**真正出射**的方向上（三色按朝向左转 / 直行 / 右转），
+   * 因此需要入射方向；没有光照到它时按「光从左来」画，形状规则一致、不影响判读。
+   * 入射光里缺哪个分量，对应的色点就画暗一些 —— 既能看到完整的朝向映射，
+   * 又不会让人误以为那束光真的存在（黄光里没有蓝，蓝点就该是暗的）。
+   * @param {{dir:number, color:number}|null} incoming 进入本格的光（方向索引 + 颜色掩码）
+   */
+  function drawPrism(ctx, layout, center, orient, incoming) {
+    const half = layout.cell * 0.22;
 
     ctx.beginPath();
-    ctx.arc(center.x - layout.cell * 0.24, center.y + layout.cell * 0.24, layout.cell * 0.07, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
+    ctx.moveTo(center.x, center.y - half);
+    ctx.lineTo(center.x + half * 0.9, center.y + half * 0.7);
+    ctx.lineTo(center.x - half * 0.9, center.y + half * 0.7);
+    ctx.closePath();
+    ctx.strokeStyle = ELEMENT_LINE;
+    ctx.lineWidth = Math.max(1.5, layout.cell * 0.06);
+    ctx.stroke();
+
+    const entry = incoming && incoming.dir >= 0 ? incoming.dir : core.DIRECTION_INDEX_BY_NAME.right;
+    const incomingColor = incoming ? incoming.color : null;
+    const slots = core.prismSlots(orient);
+    const distance = layout.cell * 0.38;
+    const radius = Math.max(1.5, layout.cell * 0.095);
+
+    for (let slot = 0; slot < slots.length; slot += 1) {
+      const direction = core.DIRECTIONS[core.prismOutDirection(entry, slot)];
+      if (!direction) continue;
+
+      // 没有入射光时按「完整预览」画（偏亮），有入射光时缺席的颜色画暗
+      let alpha = 0.78;
+      if (incomingColor !== null) alpha = (incomingColor & slots[slot]) !== 0 ? 1 : 0.24;
+
+      ctx.beginPath();
+      ctx.arc(
+        center.x + direction.dx * distance,
+        center.y + direction.dy * distance,
+        radius,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = withAlpha(beamColor(slots[slot]), alpha);
+      ctx.fill();
+    }
   }
 
   function drawHighlight(ctx, layout, position, kind) {
@@ -351,6 +385,17 @@
 
     drawBeams(ctx, layout, options.result.segments);
 
+    // 棱镜要按「光从哪边来、带什么颜色」摆色点，先扫一遍光段记住每格的入射光
+    const incomingByCell = new Map();
+    for (const segment of options.result.segments) {
+      const key = segment.to.x + "," + segment.to.y;
+      if (incomingByCell.has(key)) continue;
+      incomingByCell.set(key, {
+        dir: core.directionIndexFromVector(segment.to.x - segment.from.x, segment.to.y - segment.from.y),
+        color: segment.color,
+      });
+    }
+
     for (let y = 0; y < grid.rows; y += 1) {
       for (let x = 0; x < grid.cols; x += 1) {
         const cellData = grid.cells[y * grid.cols + x];
@@ -363,8 +408,8 @@
           drawMirror(ctx, layout, center, cellData.orient);
         } else if (cellData.type === core.TILE.SPLITTER) {
           drawSplitter(ctx, layout, center, cellData.orient);
-        } else if (core.isDichroic(cellData.type)) {
-          drawDichroic(ctx, layout, center, cellData.orient, core.dichroicMask(cellData.type));
+        } else if (cellData.type === core.TILE.PRISM) {
+          drawPrism(ctx, layout, center, cellData.orient, incomingByCell.get(x + "," + y));
         }
       }
     }
