@@ -118,9 +118,10 @@ body {
 
 .hud__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 0.625rem;
+  gap: 0.5rem;
 }
 
 .hud__version {
@@ -418,6 +419,32 @@ body {
 
 .sheet__error {
   color: var(--danger);
+}
+
+.error-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--danger);
+}
+
+.error-list li + li {
+  margin-top: 0.3rem;
+}
+
+.field {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* ---------- 无障碍与偏好 ---------- */

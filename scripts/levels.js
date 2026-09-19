@@ -621,12 +621,18 @@
       }));
   }
 
-  /** 汇总星数。progress 形如 { [levelId]: { stars: 0–3 } } */
+  /**
+   * 汇总星数。progress 支持两种写法，都在用：
+   *   { [levelId]: 3 }             存档里的写法
+   *   { [levelId]: { stars: 3 } }  更早的写法，继续兼容
+   */
   function totalStars(progress) {
     let earned = 0;
     for (const level of LEVELS) {
       const record = progress ? progress[level.id] : null;
-      const stars = record && Number.isInteger(record.stars) ? record.stars : 0;
+      let stars = 0;
+      if (isInt(record)) stars = record;
+      else if (record && isInt(record.stars)) stars = record.stars;
       earned += Math.max(0, Math.min(3, stars));
     }
     return { earned, max: LEVELS.length * 3 };

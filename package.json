@@ -26,7 +26,7 @@
     "serve": "node scripts/serve-static.js",
     "test": "node --test",
     "test:browser": "playwright test",
-    "check": "node --check scripts/light-core.js && node --check scripts/light-engine.js && node --check scripts/levels.js && node --check scripts/renderer.js && node --check scripts/app.js && node --check scripts/serve-static.js && node --check playwright.config.js && node --check e2e/app.smoke.spec.js && node --check e2e/gameplay.spec.js",
+    "check": "node --check scripts/light-core.js && node --check scripts/light-engine.js && node --check scripts/levels.js && node --check scripts/renderer.js && node --check scripts/storage.js && node --check scripts/app.js && node --check scripts/serve-static.js && node --check playwright.config.js && node --check e2e/app.smoke.spec.js && node --check e2e/gameplay.spec.js",
     "lint": "eslint scripts"
   },
   "devDependencies": {

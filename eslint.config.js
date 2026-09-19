@@ -49,6 +49,7 @@ module.exports = [
         JSON: "readonly",
         Error: "readonly",
         RegExp: "readonly",
+        Date: "readonly",
         Boolean: "readonly",
         parseInt: "readonly",
         parseFloat: "readonly",

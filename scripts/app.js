@@ -20,7 +20,11 @@
   const engine = globalThis.LightEngine;
   const levels = globalThis.LightLevels;
   const renderer = globalThis.LightRenderer;
-  if (!core || !engine || !levels || !renderer) return;
+  const storage = globalThis.LightStorage;
+  if (!core || !engine || !levels || !renderer || !storage) return;
+
+  /** 存档仓库。localStorage 不可用时自动降级为内存存档，游戏照常可玩。 */
+  const store = storage.createStore();
 
   const ERASER = "__eraser";
 
@@ -49,6 +53,10 @@
     btnClear: document.getElementById("btn-clear"),
     btnUndo: document.getElementById("btn-undo"),
     btnRedo: document.getElementById("btn-redo"),
+    btnSnapshots: document.getElementById("btn-snapshots"),
+    btnExport: document.getElementById("btn-export"),
+    btnImport: document.getElementById("btn-import"),
+    fileImport: document.getElementById("file-import"),
     status: document.getElementById("level-status"),
     btnNext: document.getElementById("btn-next"),
     overlay: document.getElementById("overlay"),
@@ -141,10 +149,11 @@
     state.result = engine.solve(level, state.placement);
   }
 
-  /** 一次会写进撤销栈的改动：先记历史，再重算 */
+  /** 一次会写进撤销栈的改动：先记历史，再重算，最后落盘 */
   function commit() {
     pushHistory();
     refresh(false);
+    rememberBoard();
   }
 
   /** 重算 + 刷 HUD + 重绘，不碰历史栈。silent = 通关时不弹结算浮层 */
@@ -153,6 +162,28 @@
     updateHud();
     markDirty();
     checkCompletion(silent === true);
+  }
+
+  // ---------- 存档 ----------
+
+  /**
+   * 把当前关卡的布局写进存档并落盘。
+   * 只留这一个写入点，撤销/重做也走它，避免出现「存档与画面不一致」。
+   */
+  function rememberBoard() {
+    const level = currentLevel();
+    if (!level) return;
+    store.replace(storage.setBoard(store.data, level.id, state.placement));
+    store.persist();
+  }
+
+  /** 记录历史最好成绩。只在刷新记录时才落盘，避免无谓的写入。 */
+  function rememberStars(levelId, stars) {
+    const result = storage.updateStars(store.data, levelId, stars);
+    if (!result.improved) return;
+    store.replace(result.save);
+    store.persist();
+    state.stars = store.data.stars;
   }
 
   // ---------- 撤销 / 重做 ----------
@@ -218,6 +249,7 @@
     state.placement = clonePlacement(state.history[next]);
     disarmClear();
     refresh(true); // 撤销/重做不算「玩家刚通关」，静默判定
+    rememberBoard();
     return true;
   }
 
@@ -366,7 +398,10 @@
     if (lit && !state.wasAllLit) {
       const stars = engine.starsFor(true, state.result.placedCount, level.par);
       const previous = state.stars[level.id] || 0;
-      if (stars > previous) state.stars[level.id] = stars;
+      if (stars > previous) {
+        state.stars[level.id] = stars;
+        rememberStars(level.id, stars);
+      }
       updateHud();
       if (!silent) showResult(stars, level);
     }
@@ -549,6 +584,12 @@
     dom.sheetBody.innerHTML = "";
     dom.sheetActions.innerHTML = "";
 
+    const total = levels.totalStars(state.stars);
+    const summary = document.createElement("p");
+    summary.className = "sheet__summary";
+    summary.textContent = "共获得 " + total.earned + " / " + total.max + " 星";
+    dom.sheetBody.appendChild(summary);
+
     const list = document.createElement("div");
     list.className = "level-list";
 
@@ -590,6 +631,176 @@
     showOverlay();
   }
 
+  /** 统一的错误展示：导入失败、快照失败都走这里，把原因逐条列出来 */
+  function showErrors(title, errors) {
+    dom.sheetTitle.textContent = title;
+    dom.sheetBody.innerHTML = "";
+    dom.sheetActions.innerHTML = "";
+
+    const list = document.createElement("ul");
+    list.className = "error-list";
+    for (const error of errors) {
+      const item = document.createElement("li");
+      item.textContent = error;
+      list.appendChild(item);
+    }
+    dom.sheetBody.appendChild(list);
+
+    addAction("知道了", hideOverlay, true);
+    showOverlay();
+  }
+
+  // ---------- 工作台快照 ----------
+
+  function showSnapshotSheet() {
+    const level = currentLevel();
+    if (!level) return;
+
+    dom.sheetTitle.textContent = "工作台 · " + level.title;
+    dom.sheetBody.innerHTML = "";
+    dom.sheetActions.innerHTML = "";
+
+    const mine = store.data.snapshots.filter((item) => item.levelId === level.id);
+
+    if (mine.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "sheet__summary";
+      empty.textContent = "这一关还没有存过工作台。";
+      dom.sheetBody.appendChild(empty);
+    } else {
+      const list = document.createElement("div");
+      list.className = "level-list";
+      for (const item of mine) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "level-item";
+        button.dataset.snapshot = item.name;
+
+        const label = document.createElement("span");
+        label.textContent = item.name;
+        button.appendChild(label);
+
+        const count = document.createElement("span");
+        count.className = "level-item__stars";
+        count.textContent = item.placement.length + " 个元件";
+        button.appendChild(count);
+
+        button.addEventListener("click", () => {
+          state.placement = clonePlacement(item.placement);
+          state.wasAllLit = false;
+          hideOverlay();
+          commit();
+        });
+
+        list.appendChild(button);
+      }
+      dom.sheetBody.appendChild(list);
+    }
+
+    if (state.placement.length > 0) {
+      addAction("保存当前布局", showSaveSheet, true);
+    }
+    addAction("关闭", hideOverlay, state.placement.length === 0);
+    showOverlay();
+  }
+
+  function showSaveSheet() {
+    const level = currentLevel();
+    if (!level) return;
+
+    dom.sheetTitle.textContent = "保存工作台";
+    dom.sheetBody.innerHTML = "";
+    dom.sheetActions.innerHTML = "";
+
+    const field = document.createElement("input");
+    field.type = "text";
+    field.className = "field";
+    field.id = "snapshot-name";
+    field.maxLength = storage.MAX_NAME_LENGTH;
+    field.value = "工作台 " + (store.data.snapshots.length + 1);
+    field.setAttribute("aria-label", "工作台名称");
+    dom.sheetBody.appendChild(field);
+
+    const tip = document.createElement("p");
+    tip.className = "sheet__summary";
+    tip.textContent = "存下来之后，随时可以在「工作台」里载入。";
+    dom.sheetBody.appendChild(tip);
+
+    const save = () => {
+      const result = storage.addSnapshot(store.data, {
+        name: field.value,
+        levelId: level.id,
+        placement: state.placement,
+        savedAt: new Date().toISOString(),
+      });
+
+      if (!result.ok) {
+        showErrors("保存失败", result.errors);
+        return;
+      }
+
+      store.replace(result.save);
+      store.persist();
+      showSnapshotSheet();
+    };
+
+    addAction("保存", save, true);
+    addAction("返回", showSnapshotSheet);
+
+    showOverlay();
+    field.focus();
+    field.select();
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        save();
+      }
+    });
+  }
+
+  // ---------- 导入 / 导出 ----------
+
+  function exportCurrentLevel() {
+    const level = currentLevel();
+    if (!level) return;
+
+    const text = storage.serializeLevelFile(level, state.placement);
+    const blob = new Blob([text], { type: "application/json" });
+    if (!storage.downloadFile(storage.levelFileName(level), blob)) {
+      showErrors("导出失败", ["当前环境不支持直接下载文件"]);
+    }
+  }
+
+  async function importLevelFile(file) {
+    let text = "";
+    try {
+      text = await file.text();
+    } catch (error) {
+      showErrors("导入失败", ["读不到文件内容：" + (error && error.message ? error.message : "")]);
+      return;
+    }
+
+    const parsed = storage.parseLevelFile(text);
+    if (!parsed.ok) {
+      showErrors("导入失败 · " + file.name, parsed.errors);
+      return;
+    }
+
+    // 与已有 id 冲突时（内置关卡，或先前导入过的同名关卡）不覆盖关卡定义，
+    // 只把文件里的布局应用上去：关卡是骨架，布局才是玩家改出来的东西。
+    const registered = levels.registerLevel(parsed.level);
+    const idConflict = registered.errors.some((error) => error.indexOf("冲突") !== -1);
+    if (!registered.ok && !idConflict) {
+      showErrors("导入失败 · " + file.name, registered.errors);
+      return;
+    }
+
+    hideOverlay();
+    selectLevel(parsed.level.id);
+    state.placement = clonePlacement(parsed.placement);
+    if (state.placement.length > 0) commit();
+  }
+
   // ---------- 关卡切换 ----------
 
   function selectLevel(id) {
@@ -597,7 +808,8 @@
     if (!level) return;
 
     state.levelId = id;
-    state.placement = [];
+    // 回到某关时接着上次的布局继续 —— 自动存档的意义就在这儿
+    state.placement = clonePlacement(storage.getBoard(store.data, id));
     state.selectedType = null;
     state.cursor = null;
     state.hover = null;
@@ -784,6 +996,17 @@
   dom.btnClear.addEventListener("click", requestClear);
   dom.btnUndo.addEventListener("click", undo);
   dom.btnRedo.addEventListener("click", redo);
+  dom.btnSnapshots.addEventListener("click", showSnapshotSheet);
+  dom.btnExport.addEventListener("click", exportCurrentLevel);
+  dom.btnImport.addEventListener("click", () => dom.fileImport.click());
+  dom.fileImport.addEventListener("change", () => {
+    const file = dom.fileImport.files && dom.fileImport.files[0];
+    dom.fileImport.value = ""; // 复位，同一个文件才能被再次选中
+    if (!file) return;
+    importLevelFile(file).catch((error) => {
+      showErrors("导入失败", [String(error && error.message ? error.message : error)]);
+    });
+  });
   dom.btnNext.addEventListener("click", () => {
     const nextId = levels.nextLevelId(state.levelId);
     if (nextId) selectLevel(nextId);
@@ -805,6 +1028,10 @@
   });
 
   reducedMotion.addEventListener("change", markDirty);
+
+  // 先读档再进关卡：selectLevel 会把该关上次的布局恢复出来
+  store.load();
+  state.stars = store.data.stars;
 
   resize();
   selectLevel(levels.LEVELS[0].id);
