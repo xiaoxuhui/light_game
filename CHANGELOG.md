@@ -2,6 +2,50 @@
 
 本文件记录重要的用户可见变化。版本号遵循语义化版本；发布日期在正式发布时填写。
 
+## [1.1.0] - 2026-09-19
+
+安卓版发布：同一份 Web 代码装进 WebView 外壳，可以直接安装到手机与平板。
+Web 版没有任何行为变化 —— 唯一改动的桥探测只在原生桥存在时生效。
+
+### Added
+
+- **安卓 APK**：`light-game-android-1.1.0-debug.apk`，2.24 MB，包名 `com.xiaoxuhui.light`，
+  最低支持 Android 7.0（API 24），**不申请任何权限**。
+- **原生导出桥**：安卓端「导出」不再走 `Blob` + `<a download>`（WebView 不支持），
+  改由 `LightAndroid.saveFile()` 交给原生写系统下载目录，提示语相应改为「已保存到…」。
+  改动只落在 `storage.downloadFile()` 这一个出口内，引擎与渲染层不受影响。
+- **打包工程**：`android/` 放 WebView 外壳工程，`npm run sync:android` 把 Web 资源同步进
+  `assets/`，`npm run check:android` 只校验一致性；GitHub Actions 云端出包，
+  本地不需要安装 Android SDK 或 JDK。
+- **程序化应用图标**：由 `android/tools/make-icons.py` 用 Pillow 按 `renderer.js` 的光束配色
+  绘制（白光射入中心散成红绿蓝三束），风格可控且零积分可复现，不依赖图像生成。
+
+### Changed
+
+- 版本号从 `1.0.0` 提到 `1.1.0`，网页版与安卓版共用同一条版本线。
+
+### 已知取舍
+
+- **debug 签名**：APK 用 debug 签名发布，便于直接安装；首次安装需允许「安装未知来源应用」。
+- **存档不互通**：安卓端页面运行在 `appassets.androidplatform.net` 的 https 域下，
+  `localStorage` 的 origin 与 `file://`、网页版都不同，安卓端存档从零开始。
+- **无物理键盘**：手机端不提供键盘操作，但所有操作都有触摸等价路径（工具栏点击 + 网格点击）。
+
+### 测试
+
+- 单元测试 110 条（新增 10 条安卓外壳结构断言：包名、版本、桥名、同步清单、资源 XML 合法性），
+  浏览器验收 60 条（桌面与移动两个视口）全部通过。
+- 新增两条 CI 守卫：`res/**/*.xml` 的注释里不得出现连续两个减号（XML 规范禁止，
+  aapt 会直接拒绝）；`index.html` 引用的资源必须都在同步清单内。
+- 真机验证：装机确认 APK 可正常安装与运行。
+
+### Fixed
+
+- `colors.xml` 的注释里写了 CSS 变量名 `--bg-deep`，连续两个减号违反 XML 规范，
+  导致 `:app:mergeDebugResources` 失败。改注释措辞并由上述守卫兜住。
+- 安卓资源同步脚本原本要显式列举文件，但 CI 上 `assets/` 不存在时一致性断言会误报。
+  改为「目录缺失则跳过」并在 CI 里先同步一次。
+
 ## [1.0.0] - 2026-09-19
 
 Web 版首个正式版本：从一个空骨架变成 16 关完整可玩的游戏。
