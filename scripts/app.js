@@ -41,6 +41,8 @@
     toolbar: document.getElementById("toolbar"),
     btnLevels: document.getElementById("btn-levels"),
     btnClear: document.getElementById("btn-clear"),
+    status: document.getElementById("level-status"),
+    btnNext: document.getElementById("btn-next"),
     overlay: document.getElementById("overlay"),
     sheetTitle: document.getElementById("sheet-title"),
     sheetBody: document.getElementById("sheet-body"),
@@ -270,11 +272,26 @@
     dom.sub.textContent = "第 " + level.chapter + " 章 · " + chapterName;
 
     const best = state.stars[level.id] || 0;
-    dom.stars.textContent = best > 0 ? starText(best) : "";
-    dom.stars.setAttribute("aria-label", best > 0 ? "已获得 " + best + " 星" : "尚未通关");
+    const cleared = best > 0;
+    const nextId = levels.nextLevelId(level.id);
+
+    dom.stars.textContent = cleared ? starText(best) : "";
+    dom.stars.setAttribute("aria-label", cleared ? "已获得 " + best + " 星" : "尚未通关");
+
+    // 「下一关」是常驻入口：通关结算浮层被关掉之后，玩家仍然有路可走
+    dom.btnNext.hidden = !nextId;
+    dom.btnNext.disabled = !cleared;
 
     dom.hint.textContent = level.hint;
     dom.btnClear.disabled = state.placement.length === 0;
+
+    // 静默通关（进入关卡时目标就已被满足）不会有结算浮层，靠这一行给出反馈
+    dom.status.hidden = !cleared;
+    if (cleared) {
+      dom.status.textContent = nextId
+        ? "已通关 " + starText(best) + " · 点右上角「下一关」继续"
+        : "已通关 " + starText(best) + " · 你已完成全部关卡";
+    }
 
     updateToolbar();
   }
@@ -303,6 +320,8 @@
     toolButtons.clear();
 
     const types = core.PLACEABLE_TYPES.filter((type) => (level.inventory[type] || 0) > 0);
+    // 一个元件都不发的关卡（如教学第 1 关）不摆橡皮，免得只剩一个永远禁用的按钮让人困惑
+    if (types.length === 0) return;
     types.push(ERASER);
 
     for (const type of types) {
@@ -626,6 +645,10 @@
 
   dom.btnLevels.addEventListener("click", showLevelList);
   dom.btnClear.addEventListener("click", clearBoard);
+  dom.btnNext.addEventListener("click", () => {
+    const nextId = levels.nextLevelId(state.levelId);
+    if (nextId) selectLevel(nextId);
+  });
 
   dom.overlay.addEventListener("click", (event) => {
     if (event.target === dom.overlay) hideOverlay();

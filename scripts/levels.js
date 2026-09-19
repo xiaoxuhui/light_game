@@ -56,7 +56,7 @@
       fixed: [{ type: "emitter", x: 0, y: 2, dir: "right", color: 1 }],
       targets: [{ x: 7, y: 2, require: 1 }],
       inventory: NO_INVENTORY,
-      hint: "光会一直朝一个方向走。这一关什么都不用放 —— 先看看它是怎么走的。",
+      hint: "这一关不用放任何元件：光会一直朝一个方向走到目标。看懂了就进下一关。",
     },
     {
       schema: SCHEMA,

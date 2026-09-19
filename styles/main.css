@@ -102,6 +102,13 @@ body {
   letter-spacing: 0.04em;
 }
 
+.hud__right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
 .hud__stars {
   font-size: 0.8125rem;
   letter-spacing: 0.1em;
@@ -161,7 +168,7 @@ body {
 
 .stage-area {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 1fr auto auto;
   min-height: 0;
 }
 
@@ -181,6 +188,19 @@ body {
   text-align: center;
   color: var(--text-dim);
   min-height: 1.75rem;
+}
+
+.stage__status {
+  margin: 0;
+  padding: 0 1.25rem 0.6rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--accent);
+}
+
+.stage__status[hidden] {
+  display: none;
 }
 
 /* ---------- 工具栏 ---------- */

@@ -22,12 +22,16 @@
         <h1 class="hud__title" id="level-title">光的游戏</h1>
         <p class="hud__sub" id="level-sub"></p>
       </div>
-      <div class="hud__stars" id="level-stars" aria-live="polite"></div>
+      <div class="hud__right">
+        <div class="hud__stars" id="level-stars" aria-live="polite"></div>
+        <button class="btn btn--primary" id="btn-next" type="button" hidden>下一关</button>
+      </div>
     </header>
 
     <main class="stage-area">
       <canvas id="stage" class="stage" role="img" aria-label="游戏画布"></canvas>
       <p class="stage__hint" id="level-hint"></p>
+      <p class="stage__status" id="level-status" aria-live="polite" hidden></p>
     </main>
 
     <footer class="hud hud--bottom">
