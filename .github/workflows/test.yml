@@ -29,6 +29,10 @@ jobs:
           cache: npm
       - name: Install development dependencies
         run: npm ci
+      # 安卓外壳的结构断言会校验 assets 与源一致，而 assets 不入库（见 android/.gitignore），
+      # 故须先同步生成。本地若没同步过，那两条断言会自动跳过而不是失败。
+      - name: Sync web assets for android shell assertions
+        run: npm run sync:android
       - name: Check JavaScript syntax
         run: npm run check
       - name: Lint source
