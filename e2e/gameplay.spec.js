@@ -6,6 +6,8 @@
 // 交互一律走真实输入（键盘、指针），不直接调内部函数改状态 ——
 // 否则测的就不是玩家真正走的路径了。
 
+const fs = require("node:fs");
+
 const { expect, test } = require("@playwright/test");
 
 /** 等待渲染循环画完一帧（dirty 由 true 落回 false） */
@@ -352,9 +354,9 @@ test("关卡列表能切换到已解锁的关卡，未解锁的不可点", async
 
   await page.locator("#btn-levels").click();
   const items = page.locator("#sheet-body .level-item");
-  await expect(items).toHaveCount(4);
+  await expect(items).toHaveCount(16);
 
-  // 第 1 关进关即通关，所以第 2 关在开局就应解锁；第 3、4 关仍锁着
+  // 第 1 关进关即通关，所以第 2 关在开局就应解锁；第 3 关起仍锁着
   await expect(items.nth(0)).toBeEnabled();
   await expect(items.nth(1)).toBeEnabled();
   await expect(items.nth(2)).toBeDisabled();
@@ -381,4 +383,163 @@ test("清空按钮只有在放了元件后才可用，且需要二次确认", as
   await settle(page);
 
   expect((await readState(page)).placedCount).toBe(0);
+});
+
+// ---------- U03 离线 ----------
+
+test("U03 拦掉一切外部请求后，玩法与联网时完全一致", async ({ page }) => {
+  const blocked = [];
+  await page.route("**/*", (route) => {
+    const url = route.request().url();
+    const isLocal =
+      url.startsWith("http://127.0.0.1:4174") || url.startsWith("data:") || url.startsWith("blob:");
+    if (isLocal) {
+      route.continue();
+      return;
+    }
+    blocked.push(url);
+    route.abort();
+  });
+
+  await page.goto("/");
+  await settle(page);
+  await openLevel(page, "t02");
+
+  await page.locator("#toolbar .tool").first().click();
+  const point = await pointOf(page, 6, 4);
+  await page.mouse.click(point.x, point.y);
+  await settle(page);
+
+  const state = await readState(page);
+  expect(state.allLit).toBe(true);
+  expect(state.overlayOpen).toBe(true);
+  expect(blocked).toEqual([], "页面不应请求任何外部资源");
+});
+
+// ---------- U08 存档 ----------
+
+test("U08 通关成绩写入存档，刷新页面后仍在", async ({ page }) => {
+  await openLevel(page, "t02");
+  await placeSolvingMirror(page);
+  await settle(page);
+  expect((await readState(page)).overlayOpen).toBe(true);
+
+  await page.reload();
+  await settle(page);
+
+  await page.locator("#btn-levels").click();
+  await expect(page.locator("#sheet-body .level-item").nth(1)).toContainText("★★★");
+  await expect(page.locator("#sheet-body .level-item").nth(0)).toContainText("★★★");
+});
+
+test("U08 关卡的元件布局会被自动存下来，重新进关即恢复", async ({ page }) => {
+  await openLevel(page, "t02");
+
+  await page.locator("#toolbar .tool").first().click();
+  const point = await pointOf(page, 1, 1);
+  await page.mouse.click(point.x, point.y);
+  await settle(page);
+  expect((await readState(page)).placedCount).toBe(1);
+
+  await page.reload();
+  await settle(page);
+  await openLevel(page, "t02");
+
+  expect((await readState(page)).placedCount).toBe(1, "重新进入关卡时应恢复上次的布局");
+});
+
+// ---------- U10 / U11 导入导出 ----------
+
+test("U10 导出的关卡文件重新导入后，布局与元件朝向完全一致", async ({ page }) => {
+  await openLevel(page, "t03");
+
+  // 摆一个带朝向信息的布局：放一个分光镜再转 90°
+  await page.locator("#toolbar .tool").first().click();
+  const spot = await pointOf(page, 2, 2);
+  await page.mouse.click(spot.x, spot.y);
+  await settle(page);
+  await page.keyboard.press("Escape");
+  await page.mouse.click(spot.x, spot.y);
+  await settle(page);
+
+  const before = await page.evaluate(() => window.__lightGame.state.placement);
+  expect(before.length).toBe(1);
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.locator("#btn-export").click(),
+  ]);
+  const text = fs.readFileSync(await download.path(), "utf8");
+
+  // 清空之后再把文件导回来。
+  // 这里不能按 Escape：此时既没开浮层也没选中元件，Escape 会打开关卡列表把底栏盖住。
+  const clear = page.locator("#btn-clear");
+  await clear.click();
+  await clear.click();
+  await settle(page);
+  expect((await readState(page)).placedCount).toBe(0);
+
+  await page.locator("#file-import").setInputFiles({
+    name: "t03.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(text, "utf8"),
+  });
+  await settle(page);
+
+  const after = await page.evaluate(() => window.__lightGame.state.placement);
+  expect(after).toEqual(before);
+});
+
+test("U11 导入被篡改的文件时给出错误提示，且不改变当前关卡", async ({ page }) => {
+  await openLevel(page, "t02");
+
+  await page.locator("#file-import").setInputFiles({
+    name: "broken.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify({ schema: "light-game/level", version: 1, id: "x", cols: 999 }),
+      "utf8",
+    ),
+  });
+  await settle(page);
+
+  await expect(page.locator("#sheet-title")).toHaveText(/导入失败/);
+  await expect(page.locator("#sheet-body .error-list li").first()).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await settle(page);
+  expect((await readState(page)).levelId).toBe("t02", "被拒的导入不该切换关卡");
+  expect((await readState(page)).placedCount).toBe(0);
+});
+
+// ---------- 工作台快照 ----------
+
+test("U08 工作台可以保存当前布局并重新载入", async ({ page }) => {
+  await openLevel(page, "t02");
+
+  await page.locator("#toolbar .tool").first().click();
+  const point = await pointOf(page, 1, 1);
+  await page.mouse.click(point.x, point.y);
+  await settle(page);
+
+  await page.locator("#btn-snapshots").click();
+  await page.locator("#sheet-actions .btn", { hasText: "保存当前布局" }).click();
+  await page.locator("#snapshot-name").fill("试一下");
+  await page.locator("#sheet-actions .btn", { hasText: "保存" }).click();
+
+  await expect(page.locator('#sheet-body [data-snapshot="试一下"]')).toBeVisible();
+
+  // 换个布局，再把快照载回来
+  await page.keyboard.press("Escape");
+  const clear = page.locator("#btn-clear");
+  await clear.click();
+  await clear.click();
+  await settle(page);
+  expect((await readState(page)).placedCount).toBe(0);
+
+  await page.locator("#btn-snapshots").click();
+  await page.locator('#sheet-body [data-snapshot="试一下"]').click();
+  await settle(page);
+
+  expect((await readState(page)).placedCount).toBe(1);
 });
