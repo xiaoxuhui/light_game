@@ -12,12 +12,62 @@ const levels = require("../scripts/levels.js");
 
 const { SLASH, BACKSLASH } = core.ORIENT;
 
-/** 每关的参考解。既验证 par 可达，也验证 par 是局部最优。 */
+/** 每关的参考解。既验证 par 可达，也验证 par 是局部最优；全量最小性由穷举另行确认。 */
 const REFERENCE_SOLUTIONS = {
   t01: [],
   t02: [{ type: "mirror", x: 6, y: 4, orient: SLASH }],
   t03: [{ type: "splitter", x: 3, y: 3, orient: BACKSLASH }],
   t04: [{ type: "dichroicR", x: 3, y: 3, orient: SLASH }],
+
+  // 第 1 章 · 颜色
+  c01: [{ type: "dichroicR", x: 2, y: 2, orient: SLASH }],
+  c02: [
+    { type: "mirror", x: 6, y: 4, orient: SLASH },
+    { type: "mirror", x: 2, y: 2, orient: BACKSLASH },
+  ],
+  c03: [
+    { type: "dichroicR", x: 2, y: 2, orient: SLASH },
+    { type: "dichroicG", x: 4, y: 2, orient: SLASH },
+  ],
+  c04: [
+    { type: "mirror", x: 4, y: 1, orient: BACKSLASH },
+    { type: "dichroicR", x: 4, y: 3, orient: SLASH },
+  ],
+  c05: [
+    { type: "mirror", x: 2, y: 5, orient: SLASH },
+    { type: "dichroicG", x: 2, y: 2, orient: SLASH },
+  ],
+  c06: [
+    { type: "mirror", x: 4, y: 5, orient: SLASH },
+    { type: "dichroicR", x: 4, y: 3, orient: SLASH },
+  ],
+
+  // 第 2 章 · 精算
+  e01: [
+    { type: "splitter", x: 5, y: 3, orient: SLASH },
+    { type: "splitter", x: 8, y: 3, orient: SLASH },
+  ],
+  e02: [
+    { type: "splitter", x: 4, y: 2, orient: SLASH },
+    { type: "dichroicR", x: 7, y: 2, orient: SLASH },
+  ],
+  e03: [
+    { type: "mirror", x: 4, y: 0, orient: BACKSLASH },
+    { type: "splitter", x: 4, y: 3, orient: BACKSLASH },
+  ],
+  e04: [
+    { type: "splitter", x: 5, y: 1, orient: BACKSLASH },
+    { type: "splitter", x: 5, y: 4, orient: SLASH },
+  ],
+  e05: [
+    { type: "splitter", x: 9, y: 0, orient: BACKSLASH },
+    { type: "splitter", x: 9, y: 6, orient: SLASH },
+  ],
+  e06: [
+    { type: "mirror", x: 5, y: 2, orient: SLASH },
+    { type: "dichroicR", x: 5, y: 1, orient: SLASH },
+    { type: "splitter", x: 8, y: 1, orient: SLASH },
+  ],
 };
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -33,6 +83,18 @@ test("T14 全部内置关卡通过严格校验", () => {
     const result = levels.validateLevel(level);
     assert.equal(result.ok, true, `${level.id} 校验未通过：${result.errors.join("；")}`);
   }
+});
+
+test("T14 关卡总数为 16 关：教学 4 + 颜色 6 + 精算 6", () => {
+  const chapters = levels.listChapters();
+  assert.deepEqual(
+    chapters.map((chapter) => [chapter.id, chapter.levelIds.length]),
+    [
+      [0, 4],
+      [1, 6],
+      [2, 6],
+    ],
+  );
 });
 
 test("T14 关卡 id 唯一，且都有关卡名、提示与至少一个目标", () => {
@@ -338,6 +400,80 @@ test("T16 尺寸非法时会跳过依赖尺寸的坐标校验，但不漏报尺�
     false,
     "尺寸都不合法时不再逐个校验坐标",
   );
+});
+
+// ---------- T16：布局校验与外部关卡注册 ----------
+
+test("T16 合法布局通过校验（含空布局）", () => {
+  const level = levels.getLevel("t02");
+  assert.deepEqual(levels.validatePlacement(level, []), { ok: true, errors: [] });
+  assert.deepEqual(levels.validatePlacement(level, [{ type: "mirror", x: 6, y: 4, orient: SLASH }]), {
+    ok: true,
+    errors: [],
+  });
+});
+
+test("T16 布局里的非法元件逐项被拒", () => {
+  const level = levels.getLevel("t02"); // 7×5，emitter(0,4)，target(6,0)，mirror 配额 3
+
+  const cases = [
+    [{ type: "laser", x: 1, y: 1 }],
+    [{ type: "target", x: 1, y: 1 }],
+    [{ type: "mirror", x: 99, y: 1 }],
+    [{ type: "mirror", x: -1, y: 1 }],
+    [{ type: "mirror", x: 1.5, y: 1 }],
+    [{ type: "mirror", x: 1, y: 1, orient: 5 }],
+    [{ type: "mirror", x: 0, y: 4 }], // 压在光源上
+    [{ type: "mirror", x: 6, y: 0 }], // 压在目标上
+    [
+      { type: "mirror", x: 1, y: 1 },
+      { type: "mirror", x: 1, y: 1 },
+    ], // 自重叠
+    [
+      { type: "mirror", x: 1, y: 1 },
+      { type: "mirror", x: 2, y: 1 },
+      { type: "mirror", x: 3, y: 1 },
+      { type: "mirror", x: 4, y: 1 },
+    ], // 超出 mirror:3 的配额
+    "not-an-array",
+    [null],
+  ];
+
+  for (const placement of cases) {
+    const result = levels.validatePlacement(level, placement);
+    assert.equal(result.ok, false, `${JSON.stringify(placement)} 应被拒绝`);
+    assert.ok(result.errors.length > 0, "拒绝时必须给出原因");
+  }
+});
+
+test("T16 导入的关卡可以注册，但不能覆盖内置关卡", () => {
+  const custom = clone(levels.getLevel("t01"));
+  custom.id = "user-1";
+  custom.chapter = 9;
+  custom.title = "自建关";
+
+  const accepted = levels.registerLevel(custom);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.replaced, false);
+  assert.equal(levels.getLevel("user-1").title, "自建关");
+
+  // 同名再注册是替换，不是新增
+  custom.title = "自建关 2";
+  assert.equal(levels.registerLevel(custom).replaced, true);
+  assert.equal(levels.getLevel("user-1").title, "自建关 2");
+
+  // 与内置 id 冲突一律拒绝
+  const conflict = clone(levels.getLevel("t02"));
+  const rejected = levels.registerLevel(conflict);
+  assert.equal(rejected.ok, false);
+  assert.ok(rejected.errors.some((error) => error.indexOf("内置") !== -1));
+
+  // 非法数据同样拒绝
+  assert.equal(levels.registerLevel({ id: "broken" }).ok, false);
+
+  // 清理，避免影响其它用例
+  const index = levels.LEVELS.findIndex((level) => level.id === "user-1");
+  if (index !== -1) levels.LEVELS.splice(index, 1);
 });
 
 test("T16 被篡改的关卡无法在求解器里造成异常", () => {
