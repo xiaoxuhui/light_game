@@ -7,6 +7,8 @@
 
 在线试玩：**https://xiaoxuhui.github.io/light_game/**
 
+安卓版：**[下载 APK](https://github.com/xiaoxuhui/light_game/releases/latest)** —— Android 7.0 及以上，2.24 MB，不申请任何权限。
+
 ![游戏画面](doc/screenshots/c03.png)
 
 用反射镜、分光镜和三色二向色镜引导光的方向与颜色，把正确颜色的光送到目标上。
@@ -39,11 +41,34 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| 一 | 电脑浏览器 Web 版（纯静态，无打包器） | ✅ 已完成（v1.0.0） |
-| 二 | 打包安卓 APK（WebView 外壳 + 内置资源 + 云端构建） | 未开始 |
+| 一 | 电脑浏览器 Web 版（纯静态，无打包器） | ✅ 已完成 |
+| 二 | 打包安卓 APK（WebView 外壳 + 内置资源 + 云端构建） | ✅ 已完成（v1.1.0） |
 
-阶段二复用已在 EML 计算台、康威生命游戏上跑通的打包方案。工程结构从第一天起就按 APK
-的约束设计（相对路径、不用 ES Module、Pointer Events、导出收敛到单一函数），所以打包不需要返工。
+阶段二复用了已在 EML 计算台、康威生命游戏上跑通的打包方案。工程结构从第一天起就按 APK
+的约束设计（相对路径、不用 ES Module、Pointer Events、导出收敛到单一函数），所以打包没有返工：
+全工程只有导出这一个出口需要在安卓端改走原生桥。
+
+## 安卓版
+
+从 [Releases](https://github.com/xiaoxuhui/light_game/releases) 下载 APK 直接安装即可，
+首次安装需要在系统里允许「安装未知来源应用」。包内是同一份 Web 代码加一层 WebView 外壳，
+离线可玩，界面与网页版完全一致。
+
+与浏览器相比，跨进程有差异的只有两处，都属于预期：
+
+| 项 | 说明 |
+|---|---|
+| 导出 | WebView 不支持 `Blob` + `<a download>`，安卓端改由原生桥写系统下载目录，提示语为「已保存到…」 |
+| 存档 | 页面跑在 `appassets.androidplatform.net` 的 https 域下，`localStorage` 的 origin 与网页版不同，安卓端存档从零开始 |
+
+出包全程在 GitHub Actions 上云端构建，本地不需要安装 Android SDK。相关命令：
+
+```bash
+npm run sync:android    # 把 index.html / scripts / styles 同步进 android/app/src/main/assets
+npm run check:android   # 只校验一致性、不写入（CI 用这个）
+```
+
+细节与取舍见 [`doc/安卓打包实施计划.md`](doc/安卓打包实施计划.md)。
 
 ## 本地运行
 
@@ -64,7 +89,7 @@ npm run serve     # 启动静态服务，默认 http://127.0.0.1:4174
 ```bash
 npm run check         # JavaScript 语法检查
 npm run lint          # ESLint 静态检查
-npm test              # 单元测试 95 条（node --test）
+npm test              # 单元测试 110 条（node --test）
 npm run test:browser  # Playwright 验收 60 条（桌面 + 移动视口）
 ```
 
@@ -82,8 +107,11 @@ scripts/app.js                 编排：输入 → 引擎 → 渲染 → HUD →
 scripts/serve-static.js        零依赖本地静态服务（开发工具，非应用代码）
 tests/                         单元测试（不需要浏览器）
 e2e/                           Playwright 验收（真实浏览器 + 真实输入）
-doc/                           需求与测试用例、设计文档、实施计划
+doc/                           需求与测试用例、设计文档、实施计划、安卓打包文档
+android/                       安卓外壳工程（WebView + 内置 assets + 程序化图标）
+scripts/sync-android-assets.mjs  把 Web 资源同步进 android 的 assets（开发工具）
 .github/workflows/test.yml     CI：语法 + lint + 单测 + 浏览器验收
+.github/workflows/android-apk.yml  CI：云端构建 APK，打 tag 时挂到 Release
 ```
 
 脚本按 `<script defer>` 顺序加载，**加载顺序即依赖顺序**，与 `app.js` 共享全局命名空间。
