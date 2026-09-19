@@ -27,9 +27,10 @@
     "sync:android": "node scripts/sync-android-assets.mjs",
     "check:android": "node scripts/sync-android-assets.mjs --check",
     "test": "node --test",
+    "verify:par": "node tools/par-search.mjs",
     "test:browser": "playwright test",
-    "check": "node --check scripts/light-core.js && node --check scripts/light-engine.js && node --check scripts/levels.js && node --check scripts/renderer.js && node --check scripts/storage.js && node --check scripts/app.js && node --check scripts/serve-static.js && node --check playwright.config.js && node --check e2e/app.smoke.spec.js && node --check e2e/gameplay.spec.js",
-    "lint": "eslint scripts"
+    "check": "node --check scripts/light-core.js && node --check scripts/light-engine.js && node --check scripts/levels.js && node --check scripts/renderer.js && node --check scripts/storage.js && node --check scripts/app.js && node --check scripts/serve-static.js && node --check playwright.config.js && node --check e2e/app.smoke.spec.js && node --check e2e/gameplay.spec.js && node --check tools/par-search.mjs",
+    "lint": "eslint scripts tools"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
