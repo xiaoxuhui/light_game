@@ -262,3 +262,81 @@ test("T15 后端写入抛错时不打断游戏，只记录 lastError", () => {
   store.reset();
   assert.deepEqual(store.data, storage.emptySave());
 });
+
+// ---------- U14 安卓导出桥（阶段 5 打包） ----------
+//
+// 安卓 WebView 不支持 Blob + <a download>，外壳会注入 LightAndroid 桥。
+// downloadFile() 探测到桥就把文本交给它，探测不到才走浏览器下载。
+
+/** 装上假桥跑一段，跑完自动摘掉，避免污染其它用例 */
+async function withBridge(saveFile, run) {
+  globalThis.LightAndroid = { saveFile };
+  try {
+    await run();
+  } finally {
+    delete globalThis.LightAndroid;
+  }
+}
+
+/** readBlobText 是异步的，等一轮宏任务让回调落地 */
+const settleBridge = () => new Promise((resolve) => setImmediate(resolve));
+
+test("U14 没有桥时走浏览器下载：Node 环境无 document，返回 false", () => {
+  assert.equal(typeof globalThis.document, "undefined");
+  assert.equal(storage.downloadFile("t02.json", new Blob(["{}"])), false);
+});
+
+test("U14 有桥时导出交给原生，内容与文件名原样传出", async () => {
+  const calls = [];
+  await withBridge(
+    (name, content) => {
+      calls.push({ name, content });
+      return true;
+    },
+    async () => {
+      assert.equal(storage.downloadFile("t02.json", new Blob(["{\"a\":1}"])), true);
+      await settleBridge();
+    }
+  );
+
+  assert.equal(calls.length, 1, "桥应恰好被调用一次");
+  assert.equal(calls[0].name, "t02.json");
+  assert.equal(calls[0].content, "{\"a\":1}", "桥收到的必须是 Blob 里的原文");
+});
+
+test("U14 桥抛错不向上传播（导出失败不该打断游戏）", async () => {
+  await withBridge(
+    () => {
+      throw new Error("bridge down");
+    },
+    async () => {
+      assert.equal(storage.downloadFile("t02.json", new Blob(["{}"])), true);
+      await settleBridge();
+    }
+  );
+});
+
+test("U14 桥收到的内容能被导入路径原样读回", async () => {
+  const level = levels.LEVELS.find((item) => item.id === "t02");
+  const placement = [{ type: "mirror", x: 6, y: 4, orient: SLASH }];
+  const text = storage.serializeLevelFile(level, placement);
+
+  let saved = null;
+  await withBridge(
+    (name, content) => {
+      saved = { name, content };
+      return true;
+    },
+    async () => {
+      storage.downloadFile(storage.levelFileName(level), new Blob([text]));
+      await settleBridge();
+    }
+  );
+
+  assert.ok(saved, "桥应当被调用");
+  assert.equal(saved.name, "t02.json", "导出文件名沿用网页端逻辑");
+
+  const parsed = storage.parseLevelFile(saved.content);
+  assert.equal(parsed.ok, true, (parsed.errors || []).join("；"));
+  assert.deepEqual(parsed.placement, placement, "经过桥之后布局不应变形");
+});

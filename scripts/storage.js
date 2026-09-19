@@ -334,7 +334,24 @@
    * 所有导出的唯一出口。安卓 WebView 不支持 Blob + <a download>，
    * 届时整体换成 JS 桥调用即可，调用点不必改。
    */
-  function downloadFile(name, blob) {
+  /** 读出 Blob 的文本：优先 Blob.text()，老 WebView 回退 FileReader。读不到时回调 null */
+  function readBlobText(blob, onDone) {
+    if (blob && typeof blob.text === "function") {
+      blob.text().then(onDone, () => onDone(null));
+      return;
+    }
+    if (typeof root.FileReader !== "function") {
+      onDone(null);
+      return;
+    }
+    const reader = new root.FileReader();
+    reader.onload = () => onDone(String(reader.result || ""));
+    reader.onerror = () => onDone(null);
+    reader.readAsText(blob);
+  }
+
+  /** 浏览器原生下载路径（Blob URL + <a download>） */
+  function browserDownload(name, blob) {
     if (!root.document || typeof root.URL === "undefined") return false;
 
     const url = root.URL.createObjectURL(blob);
@@ -349,6 +366,29 @@
     // 交给下一轮事件循环再释放，避免部分浏览器在下载启动前就让地址失效
     root.setTimeout(() => root.URL.revokeObjectURL(url), 0);
     return true;
+  }
+
+  /**
+   * 导出的唯一出口。
+   *
+   * 安卓外壳的 WebView 不支持 Blob + <a download>（会静默失败），因此先探测原生注入的
+   * LightAndroid 桥，命中就把文本交给它写入系统下载目录。调用点完全不需要区分平台 ——
+   * 这正是把所有导出收敛到这一个函数的意义。
+   */
+  function downloadFile(name, blob) {
+    const bridge = root.LightAndroid;
+    if (bridge && typeof bridge.saveFile === "function") {
+      readBlobText(blob, (text) => {
+        if (typeof text !== "string") return;
+        try {
+          bridge.saveFile(name, text);
+        } catch (error) {
+          // 桥异常时原生侧会给出失败提示；WebView 里浏览器下载本就不可用，无需回退
+        }
+      });
+      return true;
+    }
+    return browserDownload(name, blob);
   }
 
   // ---------- 带 I/O 的薄封装 ----------
