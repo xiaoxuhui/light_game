@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标背景层：取自图标背景的中心高光 → 页面底色（--bg-deep #08090c） -->
+<!-- 自适应图标背景层：取自图标背景的中心高光 → 页面底色（bg-deep #08090c） -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <gradient

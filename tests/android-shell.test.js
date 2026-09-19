@@ -10,7 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { buildPlan, ASSETS_ROOT, ROOT } from "../scripts/sync-android-assets.mjs";
@@ -37,7 +37,18 @@ const EXPECT = {
 const read = (file) => readFile(file, "utf8");
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-test("U03 assets 中的网页与源产物字节一致", async () => {
+/**
+ * assets 是本地产物（见 android/.gitignore），CI 上的 web 测试跑之前并不会同步它。
+ *
+ * 「目录不存在」不等于「内容不一致」—— 这两条断言要抓的是「改了网页忘了同步」，
+ * 只在同步过之后才有意义。目录不在时跳过，不要误报成失败。
+ * （APK 侧的 U03 由 android-apk.yml 校验，那里一定会先同步。）
+ */
+const SKIP_NO_ASSETS = existsSync(ASSETS_ROOT)
+  ? false
+  : "assets 尚未同步（npm run sync:android），本次跳过";
+
+test("U03 assets 中的网页与源产物字节一致", { skip: SKIP_NO_ASSETS }, async () => {
   const items = await buildPlan();
   assert.ok(items.length > 0, "同步清单为空，请检查 android-assets.config.mjs");
   for (const item of items) {
@@ -50,7 +61,7 @@ test("U03 assets 中的网页与源产物字节一致", async () => {
   }
 });
 
-test("入口页存在于 assets 中", () => {
+test("入口页存在于 assets 中", { skip: SKIP_NO_ASSETS }, () => {
   assert.ok(
     existsSync(path.join(ASSETS_ROOT, ENTRY_PAGE)),
     `缺少入口页 ${ENTRY_PAGE}（需与 MainActivity 的 ASSET_FILE 一致）`
@@ -174,5 +185,26 @@ test("开发工具脚本没有被同步进 assets", async () => {
     "scripts/android-assets.config.mjs",
   ]) {
     assert.ok(!rels.includes(tool), `${tool} 是开发工具，不应进 APK`);
+  }
+});
+
+test("资源 XML 的注释里不含连续两个减号（AAPT 会直接拒绝）", async () => {
+  // XML 规范不允许注释里出现 `--`，而 CSS 变量名恰好长这样（--bg-deep）。
+  // 这个错误只有真正跑 aapt 时才会暴露，本机没有 Android 工具链，
+  // 所以放在这里当轻量守卫 —— 别等 CI 构建五分钟才发现。
+  const dir = path.join(APP, "res");
+  const entries = await readdir(dir, { recursive: true });
+  const xmlFiles = entries.filter((entry) => entry.endsWith(".xml"));
+  assert.ok(xmlFiles.length > 0, "没有找到任何资源 XML，路径可能不对");
+
+  for (const rel of xmlFiles) {
+    const text = await readFile(path.join(dir, rel), "utf8");
+    for (const comment of text.matchAll(/<!--([\s\S]*?)-->/g)) {
+      assert.ok(
+        !comment[1].includes("--"),
+        `${rel} 的注释里有连续两个减号，aapt 会报 ` +
+          `The string "--" is not permitted within comments`
+      );
+    }
   }
 });
