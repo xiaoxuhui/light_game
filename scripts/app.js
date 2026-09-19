@@ -65,7 +65,10 @@
     sheetActions: document.getElementById("sheet-actions"),
   };
 
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  // 关于 prefers-reduced-motion：画布里没有任何时间驱动的动画（每帧都是静态绘制，
+  // 静置时脏标记为假、一帧都不画），所以没有需要在 JS 里冻结的东西。
+  // 唯一的动效是按钮过渡，由 styles/main.css 的媒体查询负责关掉。
+  // 阶段 3 复查时删掉了原先那个只挂 change 监听、从不被读取的 matchMedia 变量 —— 它是死代码。
 
   const state = {
     levelId: null,
@@ -441,13 +444,24 @@
     dom.btnUndo.disabled = !canUndo();
     dom.btnRedo.disabled = !canRedo();
 
-    // 静默通关（进入关卡时目标就已被满足）不会有结算浮层，靠这一行给出反馈
-    dom.status.hidden = !cleared;
-    if (cleared) {
-      dom.status.textContent = nextId
-        ? "已通关 " + starText(best) + " · 点右上角「下一关」继续"
-        : "已通关 " + starText(best) + " · 你已完成全部关卡";
+    // 状态行承载两种反馈，按优先级拼接：
+    //   1. 光路过载 —— 这是「显示可能不完整」，必须说清楚，否则玩家会以为关卡坏了
+    //   2. 通关 —— 静默通关（进关时目标就已满足）没有结算浮层，只能靠这一行
+    const overloaded = Boolean(state.result && state.result.overflow);
+    const messages = [];
+    if (overloaded) {
+      messages.push("光路过于复杂，已停止追踪，画面可能不完整 · 减少一些元件再试");
     }
+    if (cleared) {
+      messages.push(
+        nextId
+          ? "已通关 " + starText(best) + " · 点右上角「下一关」继续"
+          : "已通关 " + starText(best) + " · 你已完成全部关卡",
+      );
+    }
+    dom.status.hidden = messages.length === 0;
+    dom.status.textContent = messages.join(" · ");
+    dom.status.classList.toggle("stage__status--warn", overloaded);
 
     updateToolbar();
   }
@@ -1026,8 +1040,6 @@
       start();
     }
   });
-
-  reducedMotion.addEventListener("change", markDirty);
 
   // 先读档再进关卡：selectLevel 会把该关上次的布局恢复出来
   store.load();

@@ -209,6 +209,11 @@ body {
   display: none;
 }
 
+/* 光路过载时改用警示色。与「已通关」的强调色区分开，避免玩家误判成好消息 */
+.stage__status--warn {
+  color: var(--danger);
+}
+
 /* ---------- 工具栏 ---------- */
 
 .toolbar {
