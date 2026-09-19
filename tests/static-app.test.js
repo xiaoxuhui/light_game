@@ -24,8 +24,9 @@ function collectAssetRefs(html) {
 }
 
 test("index.html 使用中文语言声明与 UTF-8 编码", () => {
-  assert.match(indexHtml, /<html lang="zh-CN">/);
-  assert.match(indexHtml, /<meta charset="UTF-8" ?\/?>/);
+  // 正则刻意不要求紧随 `>`：编辑器预览可能往标签上追加属性，不该因此判定失败
+  assert.match(indexHtml, /<html lang="zh-CN"/);
+  assert.match(indexHtml, /<meta charset="UTF-8"/);
   assert.match(indexHtml, /<title>光的游戏/);
 });
 
@@ -69,6 +70,16 @@ test("页面样式表存在且定义了舞台与主题变量", () => {
   assert.match(css, /\.stage\s*\{/);
   // 安全区变量：手机刘海 / 手势条适配
   assert.match(css, /env\(safe-area-inset-top/);
+});
+
+test("入口页提供常驻的通关状态行与「下一关」入口", () => {
+  // 结算浮层会被关掉，通关后必须还有常驻入口，否则玩家会卡在已通关的关卡里出不去
+  assert.match(indexHtml, /id="btn-next"/, "顶栏应有常驻的下一关按钮");
+  assert.match(indexHtml, /id="level-status"/, "舞台下方应有常驻的通关状态行");
+
+  const app = readFile("scripts/app.js");
+  assert.match(app, /getElementById\("btn-next"\)/, "app.js 应接管下一关按钮");
+  assert.match(app, /getElementById\("level-status"\)/, "app.js 应接管通关状态行");
 });
 
 test("应用脚本提供待机渲染与渲染循环", () => {

@@ -208,6 +208,46 @@ test("U09 窄屏下工具栏完整可点，画布仍可交互", async ({ page })
   expect(state.allLit).toBe(true);
 });
 
+// ---------- 通关反馈与关卡推进 ----------
+
+test("U01 教学第 1 关进关即通关，不弹浮层但给出常驻的下一关入口", async ({ page }) => {
+  await page.goto("/");
+  await settle(page);
+
+  const state = await readState(page);
+  expect(state.levelId).toBe("t01");
+  expect(state.allLit).toBe(true);
+  expect(state.overlayOpen).toBe(false); // 静默通关：不打断玩家看图
+
+  await expect(page.locator("#level-status")).toContainText("已通关");
+  await expect(page.locator("#btn-next")).toBeEnabled();
+  // 这一关一个元件都不发，工具栏应为空，而不是只剩一个永远禁用的橡皮
+  await expect(page.locator("#toolbar .tool")).toHaveCount(0);
+
+  await page.locator("#btn-next").click();
+  await settle(page);
+  expect((await readState(page)).levelId).toBe("t02");
+});
+
+test("U01 结算浮层被关掉后，仍能从顶栏进入下一关", async ({ page }) => {
+  await openLevel(page, "t02");
+
+  await page.locator("#toolbar .tool").first().click();
+  const point = await pointOf(page, 6, 4);
+  await page.mouse.click(point.x, point.y);
+  await settle(page);
+  expect((await readState(page)).overlayOpen).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#overlay")).toBeHidden();
+  await expect(page.locator("#level-status")).toContainText("已通关");
+  await expect(page.locator("#btn-next")).toBeEnabled();
+
+  await page.locator("#btn-next").click();
+  await settle(page);
+  expect((await readState(page)).levelId).toBe("t03");
+});
+
 // ---------- 关卡导航 ----------
 
 test("关卡列表能切换到已解锁的关卡，未解锁的不可点", async ({ page }) => {
