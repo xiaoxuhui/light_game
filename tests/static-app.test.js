@@ -24,10 +24,21 @@ function collectAssetRefs(html) {
 }
 
 test("index.html 使用中文语言声明与 UTF-8 编码", () => {
-  // 正则刻意不要求紧随 `>`：编辑器预览可能往标签上追加属性，不该因此判定失败
-  assert.match(indexHtml, /<html lang="zh-CN"/);
+  assert.match(indexHtml, /<html lang="zh-CN">/);
   assert.match(indexHtml, /<meta charset="UTF-8"/);
   assert.match(indexHtml, /<title>光的游戏/);
+});
+
+test("index.html 不含编辑器注入的预览属性", () => {
+  // 编辑器的可视化预览会往每个标签上追加 data-page-node-id，这个属性会污染 diff，
+  // 还会让上面那些要求标签结构干净的正则失效。它已经混进来过四次，所以在这里拦住，
+  // 免得靠提交前手工 sed 清理。
+  const injected = indexHtml.match(/data-page-node-id="[^"]*"/g) || [];
+  assert.equal(
+    injected.length,
+    0,
+    `index.html 里有 ${injected.length} 处编辑器注入的 data-page-node-id，提交前请清理`,
+  );
 });
 
 test("页面版本号与 package.json 保持一致", () => {
