@@ -25,8 +25,8 @@ const EXPECT = {
   namespace: "com.xiaoxuhui.light",
   minSdk: 24,
   targetSdk: 34,
-  versionCode: 2,
-  versionName: "1.2.0",
+  versionCode: 3,
+  versionName: "1.2.1",
   appName: "光的游戏",
   /** MainActivity.kt 所在包路径（对应 java/ 下的目录层级） */
   packageDir: ["com", "xiaoxuhui", "light"],

@@ -1,6 +1,6 @@
 {
   "name": "light-game",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "A dependency-free, offline-friendly browser game about light.",
   "license": "MIT",

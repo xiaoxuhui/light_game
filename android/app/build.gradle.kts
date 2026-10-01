@@ -11,8 +11,8 @@ android {
         applicationId = "com.xiaoxuhui.light"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.2.0"
+        versionCode = 3
+        versionName = "1.2.1"
 
         // 应用为单语言中文工具，去掉无用资源以减小体积
         resourceConfigurations += listOf("zh", "en")

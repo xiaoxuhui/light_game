@@ -5,7 +5,7 @@
 
 - 包名：`com.xiaoxuhui.light`
 - 应用名：光的游戏
-- 版本：1.2.0（versionCode 2）—— 与网页版同一条版本线，`versionCode` 只增不减
+- 版本：1.2.1（versionCode 3）—— 与网页版同一条版本线，`versionCode` 只增不减
 - minSdk 24（Android 7.0）/ targetSdk 34
 - 权限：**无**（完全离线，不申请网络权限）
 
