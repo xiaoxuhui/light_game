@@ -402,14 +402,25 @@
         if (!cellData) continue;
 
         const center = cellCenter(layout, x, y);
-        if (cellData.type === core.TILE.EMITTER) {
-          drawEmitter(ctx, layout, x, y, cellData);
-        } else if (cellData.type === core.TILE.MIRROR) {
-          drawMirror(ctx, layout, center, cellData.orient);
-        } else if (cellData.type === core.TILE.SPLITTER) {
-          drawSplitter(ctx, layout, center, cellData.orient);
-        } else if (cellData.type === core.TILE.PRISM) {
-          drawPrism(ctx, layout, center, cellData.orient, incomingByCell.get(x + "," + y));
+
+        // 逐个元件兜底：drawScene 是顺序绘制，任何一处未捕获异常都会让排在后面的
+        // 元件一个都画不出来 —— 症状是「除了网格和光，场上元件全没了」，
+        // 而真正出错的往往只是一个格子。玩家曾经就是这么遇到「放下棱镜后其他元件消失」的。
+        //
+        // 这里继续画剩余元件，但不静默吞掉错误：记到控制台后，
+        // app.smoke.spec.js 的「运行期间控制台无报错」会把它变成红灯。
+        try {
+          if (cellData.type === core.TILE.EMITTER) {
+            drawEmitter(ctx, layout, x, y, cellData);
+          } else if (cellData.type === core.TILE.MIRROR) {
+            drawMirror(ctx, layout, center, cellData.orient);
+          } else if (cellData.type === core.TILE.SPLITTER) {
+            drawSplitter(ctx, layout, center, cellData.orient);
+          } else if (cellData.type === core.TILE.PRISM) {
+            drawPrism(ctx, layout, center, cellData.orient, incomingByCell.get(x + "," + y));
+          }
+        } catch (error) {
+          console.error(`绘制元件失败，已跳过该元件：${cellData.type} @ (${x}, ${y})`, error);
         }
       }
     }

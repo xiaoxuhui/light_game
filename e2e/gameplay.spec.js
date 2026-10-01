@@ -715,3 +715,69 @@ test("U13 系统偏好减少动效时关掉过渡，但玩法一点不受影响"
   expect(state.allLit).toBe(true);
   expect(state.overlayOpen).toBe(true);
 });
+
+// ---------- U15 ----------
+
+/**
+ * 回归：棱镜放在「没有任何光经过」的格子上时，drawPrism 要走兜底分支取一个默认朝向。
+ *
+ * 该分支曾读取 `core.DIRECTION_INDEX_BY_NAME.right`，而这个常量只在 light-core.js 里
+ * 定义、忘了导出，于是 core 上取到 undefined 直接抛 TypeError。因为 drawScene 是
+ * 「先画墙 → 再画目标 → 再画光 → 最后逐个画元件」的顺序流程，循环中途抛异常，
+ * 排在后面的元件一个都画不出来 —— 玩家看到的就是「放下棱镜后其他元件全部消失」，
+ * 而棱镜自己也没画出来，看起来像「不接收任何输入」。
+ *
+ * 所以这里盯两件事：渲染期间不能有未捕获异常；关卡预设元件一个都不能少。
+ * 放的位置刻意选在光路之外，正是当初没被覆盖到的那个分支。
+ */
+test("U15 棱镜放在光路外不会中断渲染（其他元件不消失）", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  await openLevel(page, "c01");
+
+  // 找一个没有任何光束经过的空格
+  const spot = await page.evaluate(() => {
+    const { state } = window.__lightGame;
+    const { grid } = state.result;
+    const lit = new Set();
+    for (const segment of state.result.segments) {
+      lit.add(`${segment.from.x},${segment.from.y}`);
+      lit.add(`${segment.to.x},${segment.to.y}`);
+    }
+    for (let y = 0; y < grid.rows; y += 1) {
+      for (let x = 0; x < grid.cols; x += 1) {
+        if (grid.cells[y * grid.cols + x]) continue;
+        if (!lit.has(`${x},${y}`)) return { x, y };
+      }
+    }
+    return null;
+  });
+  expect(spot, "c01 应当存在没有被光照到的空格").not.toBeNull();
+
+  const presetBefore = await page.evaluate(
+    () => window.__lightGame.state.result.grid.cells.filter(Boolean).length,
+  );
+
+  await page.locator('#toolbar .tool[data-type="prism"]').click();
+  const point = await pointOf(page, spot.x, spot.y);
+  await page.mouse.click(point.x, point.y);
+
+  // 等两帧，确保绘制循环把这一帧走完
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  await page.waitForTimeout(120);
+
+  const after = await page.evaluate(() => {
+    const { state } = window.__lightGame;
+    return {
+      placed: state.placement.length,
+      cells: state.result.grid.cells.filter(Boolean).length,
+    };
+  });
+
+  expect(errors, `渲染期间不应有未捕获异常：\n${errors.join("\n")}`).toEqual([]);
+  expect(after.placed, "棱镜应当已经放下").toBe(1);
+  expect(after.cells, "预设元件不应消失（只应多出刚放的棱镜）").toBe(presetBefore + 1);
+});

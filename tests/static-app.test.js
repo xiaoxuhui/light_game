@@ -152,3 +152,41 @@ test("CI 工作流覆盖语法检查、lint、单测与浏览器冒烟", () => {
     assert.ok(workflow.includes(step), `CI 应包含步骤：${step}`);
   }
 });
+
+/**
+ * 一次真实的渲染事故：drawPrism 在「棱镜没有被任何光照到」时兜底读取
+ * `core.DIRECTION_INDEX_BY_NAME.right`，而这个常量只在 light-core.js 里定义、
+ * 忘了加进导出清单，于是 `core.DIRECTION_INDEX_BY_NAME` 是 undefined —— 抛 TypeError。
+ *
+ * 症状被放大成「放置棱镜后其他元件全部消失」：drawScene 是一条先画墙、再画目标、
+ * 再画光、最后逐个画元件的顺序流程，循环中途抛异常，排在后面的元件就一个都画不出来。
+ * 棱镜本身没画出来，看起来也就是「不接收任何输入」。
+ *
+ * 这里按「消费方引用的成员必须真实存在」做全量扫描，把「漏导出」这类失误整体挡住，
+ * 而不是只钉死这一次的 .right。
+ */
+test("各模块引用的 core 成员全部真实导出（漏导出会让整帧渲染中断）", () => {
+  const core = require(path.join(projectRoot, "scripts", "light-core.js"));
+  const consumers = [
+    "scripts/renderer.js",
+    "scripts/app.js",
+    "scripts/light-engine.js",
+    "scripts/storage.js",
+    "scripts/levels.js",
+  ];
+
+  const missing = new Set();
+  for (const file of consumers) {
+    // 前面的 (?<![\w$-]) 用来避开 require("./light-core.js") 里的 "core.js"
+    const pattern = /(?<![\w$-])core\.([A-Za-z_$][A-Za-z0-9_$]*)/g;
+    for (const match of readFile(file).matchAll(pattern)) {
+      if (!(match[1] in core)) missing.add(`${file} → core.${match[1]}`);
+    }
+  }
+
+  assert.deepEqual(
+    [...missing],
+    [],
+    `以下 core 成员被引用但没有导出，运行时会抛 TypeError：\n${[...missing].join("\n")}`,
+  );
+});
