@@ -14,7 +14,8 @@ const { expect, test } = require("@playwright/test");
 async function settle(page) {
   await page.waitForFunction(() => {
     const game = window.__lightGame;
-    return Boolean(game) && game.state.layout !== null && game.state.result !== null && game.state.dirty === false;
+    return Boolean(game) && game.state.layout !== null && game.state.result !== null && game.state.dirty === false &&
+      (game.state.paused || !game.state.simulationPending);
   });
 }
 
@@ -106,7 +107,7 @@ test("U02 只用键盘就能选元件、移动光标、放置并通关", async (
   expect(state.stars).toBe("★★★");
 });
 
-test("U02 按 R 旋转元件能改变光路（分光镜关卡）", async ({ page }) => {
+test("U02 按 Enter 旋转元件能改变光路（分光镜关卡）", async ({ page }) => {
   await openLevel(page, "t03");
 
   await page.keyboard.press("1"); // 分光镜
@@ -117,7 +118,7 @@ test("U02 按 R 旋转元件能改变光路（分光镜关卡）", async ({ page
 
   expect((await readState(page)).allLit).toBe(false, "默认朝向的光分不出第二束光");
 
-  await page.keyboard.press("R");
+  await page.keyboard.press("Enter");
   await settle(page);
 
   const state = await readState(page);
@@ -125,10 +126,11 @@ test("U02 按 R 旋转元件能改变光路（分光镜关卡）", async ({ page
   expect(state.overlayOpen).toBe(true);
 });
 
-test("U02 棱镜是三态朝向：按 R 依次轮转，只有一态能通关", async ({ page }) => {
+test("U02 棱镜 Enter 四向旋转改变输入面，C 单独轮换 RGB 出口", async ({ page }) => {
   await openLevel(page, "t04");
 
   const orientOf = () => page.evaluate(() => window.__lightGame.state.placement[0].orient);
+  const facingOf = () => page.evaluate(() => window.__lightGame.state.placement[0].facing);
 
   await page.keyboard.press("1"); // 棱镜（本关只发这一种元件）
   for (let i = 0; i < 3; i += 1) await page.keyboard.press("ArrowRight");
@@ -142,16 +144,25 @@ test("U02 棱镜是三态朝向：按 R 依次轮转，只有一态能通关", a
   await page.keyboard.press("Escape"); // 结算浮层会拦掉按键，先关掉
 
   const observed = [];
-  for (let i = 0; i < 3; i += 1) {
-    await page.keyboard.press("R");
+  for (let i = 0; i < 4; i += 1) {
+    await page.keyboard.press("Enter");
     await settle(page);
-    observed.push({ orient: await orientOf(), allLit: (await readState(page)).allLit });
+    observed.push({ facing: await facingOf(), allLit: (await readState(page)).allLit });
+  }
+  expect(observed.map((item) => item.facing)).toEqual([1, 2, 3, 0]);
+  expect(observed.map((item) => item.allLit)).toEqual([false, false, false, true]);
+  expect(await orientOf()).toBe(0);
+  await page.keyboard.press("Escape");
+  const colors = [];
+  for (let i = 0; i < 3; i += 1) {
+    await page.keyboard.press("C");
+    await settle(page);
+    colors.push({ orient: await orientOf(), allLit: (await readState(page)).allLit });
   }
 
-  expect(observed.map((item) => item.orient)).toEqual([1, 2, 0], "棱镜三态轮转后回到原态");
-  expect(observed[0].allLit).toBe(false, "朝向 1：绿光改走左转，红灯收不到");
-  expect(observed[1].allLit).toBe(false, "朝向 2：红光直行，上面的红灯同样收不到");
-  expect(observed[2].allLit).toBe(true, "转回朝向 0 又能通关");
+  expect(colors.map((item) => item.orient)).toEqual([1, 2, 0]);
+  expect(colors.map((item) => item.allLit)).toEqual([false, false, true]);
+  expect(await facingOf()).toBe(0);
 });
 
 test("U02 Delete 键能删掉光标处的元件", async ({ page }) => {

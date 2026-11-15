@@ -147,6 +147,7 @@
    * 不可旋转的元件返回 1（调用方据此决定点击时是否循环）。
    */
   function orientStateCount(type) {
+    if (["directionalEmitter", "chip", "io", "inputPort", "outputPort"].includes(type)) return 4;
     if (type === TILE.PRISM) return PRISM_STATES;
     if (isRotatable(type)) return 2;
     return 1;
@@ -244,6 +245,190 @@
 
   /** 玩家可以放置的元件（也是关卡 inventory 的键） */
   const PLACEABLE_TYPES = Object.freeze(["mirror", "splitter", "prism"]);
+  const FREE_PLACEABLE_TYPES = Object.freeze([...PLACEABLE_TYPES, "wall", "emitter", "bulb",
+    "coldMirror", "hotMirror", "directionalEmitter", "chip"]);
+  const MAX_CHIP_CELLS = 999;
+  const CHIP_PORT_TYPES = Object.freeze(["io", "inputPort", "outputPort"]);
+  // 三个旧存档类型都是同一种 IO，箭头表示外→内；不切换角色、不改写朝向。
+  const isInputPort = (type) => CHIP_PORT_TYPES.includes(type);
+  const isOutputPort = (type) => CHIP_PORT_TYPES.includes(type);
+  function portOutputDirection(type, orient) {
+    return oppositeDirection(normalizeOrient(type, orient) * 2);
+  }
+
+  function chipCircuits(chip) {
+    if (Array.isArray(chip.circuits)) return chip.circuits;
+    return chip.appearance ? [{ ...appearanceAnchor(chip.appearance), placement: chip.placement || [] }] : [];
+  }
+
+  function chipCircuitAt(chip, point) {
+    return chipCircuits(chip).find((cell) => cell.x === point.x && cell.y === point.y);
+  }
+
+  function chipAllParts(chip) {
+    return [...(chip.placement || []), ...(chip.circuits || []).flatMap((cell) => cell.placement)];
+  }
+
+  function chipComposite(chip) {
+    const definitions = appearancePoints(chip.appearance).map((point) => ({
+      id: chip.id + "::cell(" + point.x + "," + point.y + ")", name: "格 " + point.x + "," + point.y,
+      placement: chipCircuitAt(chip, point)?.placement || [],
+    }));
+    return { definitions, placement: appearancePoints(chip.appearance).map((point, index) => ({
+      type: "chip", x: point.x, y: point.y, orient: 0, chipId: definitions[index].id,
+    })) };
+  }
+
+  function normalizeChipAppearance(raw) {
+    if (!raw || !Array.isArray(raw.cells) || raw.cells.length > MAX_CHIP_CELLS ||
+        (raw.showName !== undefined && typeof raw.showName !== "boolean")) return null;
+    let shape = raw.shape;
+    if (shape === undefined) {
+      if (!Number.isSafeInteger(raw.cols) || !Number.isSafeInteger(raw.rows) || raw.cols < 1 || raw.rows < 1 ||
+          raw.cols * raw.rows > MAX_CHIP_CELLS) return null;
+      const x = raw.minX || 0, y = raw.minY || 0;
+      if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) return null;
+      shape = Array.from({ length: raw.cols * raw.rows }, (_, index) => ({
+        x: x + index % raw.cols, y: y + Math.floor(index / raw.cols) }));
+    }
+    if (!Array.isArray(shape) || !shape.length || shape.length > MAX_CHIP_CELLS ||
+        shape.some((point) => !point || !Number.isSafeInteger(point.x) || !Number.isSafeInteger(point.y))) return null;
+    const minX = Math.min(...shape.map((point) => point.x)), minY = Math.min(...shape.map((point) => point.y));
+    const cols = Math.max(...shape.map((point) => point.x)) - minX + 1;
+    const rows = Math.max(...shape.map((point) => point.y)) - minY + 1;
+    if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows)) return null;
+    const occupied = new Set(shape.map((point) => point.x + "," + point.y));
+    if (occupied.size !== shape.length) return null;
+    const seen = new Set(), cells = [];
+    let hasArrow = false;
+    for (const cell of raw.cells) {
+      if (!cell || !Number.isSafeInteger(cell.x) || !Number.isSafeInteger(cell.y) ||
+          !occupied.has(cell.x + "," + cell.y) || seen.has(cell.x + "," + cell.y) ||
+          typeof cell.color !== "string" || !/^#[0-9a-f]{6}$/i.test(cell.color) ||
+          typeof cell.text !== "string" || cell.text.length > 12 || typeof cell.arrow !== "boolean" ||
+          (cell.arrow && hasArrow)) return null;
+      seen.add(cell.x + "," + cell.y); hasArrow ||= cell.arrow;
+      cells.push({ x: cell.x, y: cell.y, color: cell.color, text: cell.text, arrow: cell.arrow });
+    }
+    return { cols, rows, minX, minY, showName: raw.showName !== false,
+      shape: shape.map((point) => ({ x: point.x, y: point.y })).sort((a, b) => a.y - b.y || a.x - b.x), cells };
+  }
+
+  function appearancePoints(appearance) {
+    if (!appearance) return [{ x: 0, y: 0 }];
+    if (Array.isArray(appearance.shape) && appearance.shape.length <= MAX_CHIP_CELLS) return appearance.shape;
+    if (!Number.isSafeInteger(appearance.cols) || !Number.isSafeInteger(appearance.rows) ||
+        appearance.cols < 1 || appearance.rows < 1 || appearance.cols * appearance.rows > MAX_CHIP_CELLS) return [{ x: 0, y: 0 }];
+    return Array.from({ length: appearance.cols * appearance.rows }, (_, index) => ({
+      x: (appearance.minX || 0) + index % appearance.cols,
+      y: (appearance.minY || 0) + Math.floor(index / appearance.cols) }));
+  }
+
+  function appearanceAnchor(appearance) {
+    return [...appearancePoints(appearance)].sort((a, b) => a.y - b.y || a.x - b.x)[0] || { x: 0, y: 0 };
+  }
+
+  function shapeContains(appearance, x, y) {
+    return appearancePoints(appearance).some((point) => point.x === x && point.y === y);
+  }
+
+  function chipWorldPoint(definition, instance, point) {
+    const anchor = appearanceAnchor(definition?.appearance);
+    const x = point.x - anchor.x, y = point.y - anchor.y, rotation = normalizeOrient("chip", instance.orient);
+    const offset = rotation === 0 ? { x, y } : rotation === 1 ? { x: -y, y: x }
+      : rotation === 2 ? { x: -x, y: -y } : { x: y, y: -x };
+    return { x: instance.x + offset.x, y: instance.y + offset.y };
+  }
+
+  function chipLocalPoint(definition, instance, point) {
+    const anchor = appearanceAnchor(definition?.appearance);
+    const x = point.x - instance.x, y = point.y - instance.y, rotation = normalizeOrient("chip", instance.orient);
+    const offset = rotation === 0 ? { x, y } : rotation === 1 ? { x: y, y: -x }
+      : rotation === 2 ? { x: -x, y: -y } : { x: -y, y: x };
+    return { x: anchor.x + offset.x, y: anchor.y + offset.y };
+  }
+
+  function appearanceArrowCell(appearance) {
+    const explicit = appearance.cells.find((cell) => cell.arrow);
+    if (explicit) return explicit;
+    for (const point of appearancePoints(appearance)) {
+      if (!appearance.cells.some((cell) => cell.x === point.x && cell.y === point.y)) return point;
+    }
+    return appearanceAnchor(appearance);
+  }
+
+  function chipFootprint(definition, orient) {
+    return appearancePoints(definition?.appearance).map((point) => chipWorldPoint(definition, { x: 0, y: 0, orient }, point));
+  }
+
+  function placementFootprint(item, chips) {
+    const offsets = item.type === "chip" ? chipFootprint(chips.find((chip) => chip.id === item.chipId), item.orient) : [{ x: 0, y: 0 }];
+    return offsets.map((offset) => ({ x: item.x + offset.x, y: item.y + offset.y }));
+  }
+
+  function placementCollisions(placement, chips) {
+    const occupied = new Set();
+    for (const item of placement) for (const point of placementFootprint(item, chips)) {
+      const key = point.x + "," + point.y;
+      if (!Number.isSafeInteger(point.x) || !Number.isSafeInteger(point.y) || occupied.has(key)) return point;
+      occupied.add(key);
+    }
+    return null;
+  }
+
+  function chipLayoutError(chip, chips) {
+    if (!chip.appearance) return null;
+    for (const cell of chipCircuits(chip)) {
+      if (!shapeContains(chip.appearance, cell.x, cell.y)) return "已有内部线路的格子不能移出轮廓";
+      if (placementCollisions(cell.placement, chips)) return "格子内部的元件发生重叠";
+    }
+    return null;
+  }
+
+  function chipExitPoint(cell, dir, entry) {
+    const direction = DIRECTIONS[dir], origin = entry || cell;
+    let best = cell, projection = -Infinity, offset = Infinity;
+    for (const point of cell.footprint || [cell]) {
+      const p = point.x * direction.dx + point.y * direction.dy;
+      const distance = Math.abs((point.x - origin.x) * direction.dy - (point.y - origin.y) * direction.dx);
+      if (p > projection || (p === projection && distance < offset)) {
+        best = point; projection = p; offset = distance;
+      }
+    }
+    return { x: best.x, y: best.y };
+  }
+
+  function chipDependsOn(chips, fromId, targetId, visited = new Set()) {
+    if (fromId === targetId) return true;
+    if (visited.has(fromId)) return false;
+    visited.add(fromId);
+    const chip = chips.find((entry) => entry.id === fromId);
+    return Boolean(chip && chipAllParts(chip).some((part) => part.type === "chip" &&
+      chipDependsOn(chips, part.chipId, targetId, visited)));
+  }
+
+  function validateChipGraph(chips) {
+    const definitions = new Map(chips.map((chip) => [chip.id, chip]));
+    for (const chip of chips) for (const part of chipAllParts(chip)) {
+      if (part.type !== "chip") continue;
+      if (!definitions.has(part.chipId)) return { ok: false, errors: ["芯片内部引用了未定义的芯片"] };
+    }
+    const visiting = new Set(), visited = new Set();
+    function visit(id) {
+      if (visiting.has(id)) return false;
+      if (visited.has(id)) return true;
+      visiting.add(id);
+      for (const part of chipAllParts(definitions.get(id))) {
+        if (part.type === "chip" && !visit(part.chipId)) return false;
+      }
+      visiting.delete(id); visited.add(id);
+      return true;
+    }
+    for (const chip of chips) if (!visit(chip.id)) {
+      return { ok: false, errors: ["芯片不能直接或间接包含自身（循环嵌套）"] };
+    }
+    return { ok: true, errors: [] };
+  }
 
   /** 关卡预设、不可移动不可删除的元件 */
   const FIXED_TYPES = Object.freeze(["emitter", "wall"]);
@@ -251,7 +436,7 @@
   const ALL_TILE_TYPES = Object.freeze([...PLACEABLE_TYPES, ...FIXED_TYPES, TILE.TARGET]);
 
   function isRotatable(type) {
-    return type === TILE.MIRROR || type === TILE.SPLITTER || type === TILE.PRISM;
+    return [TILE.MIRROR, TILE.SPLITTER, TILE.PRISM, "coldMirror", "hotMirror", "directionalEmitter", "chip", ...CHIP_PORT_TYPES].includes(type);
   }
 
   function isPlaceable(type) {
@@ -274,7 +459,32 @@
    * @param {number} color 入射颜色掩码
    * @returns {Array<{dx:number, dy:number, color:number}>} 出射光线，可能为空
    */
-  function transmit(type, orient, dx, dy, color) {
+  // 分别配置两种元件，修改冷镜的通路或控制口不会覆盖热镜规则。
+  const THERMAL_GEOMETRY = {
+    coldMirror: { passage: [{ dx: 0, dy: 1 }, { dx: 1, dy: 0 }], control: [{ dx: 1, dy: 0 }, { dx: 0, dy: 1 }] },
+    hotMirror: { passage: [{ dx: 0, dy: 1 }, { dx: 1, dy: 0 }], control: [{ dx: 1, dy: 0 }, { dx: 0, dy: 1 }] },
+  };
+
+  function thermalAxis(type, orient) {
+    return THERMAL_GEOMETRY[type].passage[normalizeOrient(type, orient)];
+  }
+
+  function thermalAcceptsDirection(type, orient, dx, dy) {
+    const axis = thermalAxis(type, orient);
+    return (dx !== 0 || dy !== 0) && dx * axis.dy === dy * axis.dx;
+  }
+
+  function thermalControlAcceptsDirection(type, orient, dx, dy) {
+    const axis = THERMAL_GEOMETRY[type].control[normalizeOrient(type, orient)];
+    return (dx !== 0 || dy !== 0) && dx * axis.dy === dy * axis.dx;
+  }
+
+  function transmit(type, orient, dx, dy, color, facing, enabled) {
+    if (type === "coldMirror" || type === "hotMirror") {
+      const open = enabled === undefined ? type === "coldMirror" : enabled;
+      // 有朝向的通光开关：仅正反两面可通光，侧面始终挡光，不反射、不分出额外光束。
+      return open && thermalAcceptsDirection(type, orient, dx, dy) ? [{ dx, dy, color }] : [];
+    }
     if (type === TILE.MIRROR) {
       const reflected = reflectVector(dx, dy, orient);
       return [{ dx: reflected.dx, dy: reflected.dy, color }];
@@ -294,6 +504,9 @@
       // 缺哪个分量就不出哪一束，因此黄光只出两束、纯红光只出一束。
       const entryIndex = directionIndexFromVector(dx, dy);
       if (entryIndex < 0) return [];
+      // facing 是整个棱镜的四向旋转，orient 仅控制 RGB 出口顺序。
+      // 未提供 facing 的旧关卡数据保留旧的颜色槽位语义。
+      if (facing !== undefined && entryIndex !== (2 + normalizeOrient("directionalEmitter", facing) * 2) % 8) return [];
       const slots = prismSlots(orient);
       const out = [];
       for (let slot = 0; slot < slots.length; slot += 1) {
@@ -323,6 +536,33 @@
     ORIENT_LABELS,
     TILE,
     PLACEABLE_TYPES,
+    FREE_PLACEABLE_TYPES,
+    CHIP_PORT_TYPES,
+    MAX_CHIP_CELLS,
+    isInputPort,
+    isOutputPort,
+    portOutputDirection,
+    chipCircuits,
+    chipCircuitAt,
+    chipAllParts,
+    chipComposite,
+    normalizeChipAppearance,
+    appearancePoints,
+    appearanceAnchor,
+    shapeContains,
+    chipWorldPoint,
+    chipLocalPoint,
+    appearanceArrowCell,
+    chipFootprint,
+    placementFootprint,
+    placementCollisions,
+    chipLayoutError,
+    chipExitPoint,
+    chipDependsOn,
+    validateChipGraph,
+    thermalAcceptsDirection,
+    thermalControlAcceptsDirection,
+    thermalAxis,
     FIXED_TYPES,
     ALL_TILE_TYPES,
     toDirectionIndex,

@@ -73,20 +73,26 @@
   const isInt = (value) => typeof value === "number" && Number.isInteger(value);
 
   /** 逐项过滤非法元件，只保留能进网格的那些。用于读档 / 导入的兜底。 */
-  function normalizePlacement(list) {
+  function normalizePlacement(list, freeMode, insideChip) {
     const out = [];
     if (!Array.isArray(list)) return out;
 
     for (const item of list) {
       if (out.length >= MAX_UNITS) break;
       if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-      if (core.PLACEABLE_TYPES.indexOf(item.type) === -1) continue;
-      if (!isInt(item.x) || !isInt(item.y) || item.x < 0 || item.y < 0) continue;
+      const allowed = freeMode ? [...core.FREE_PLACEABLE_TYPES, ...(insideChip ? core.CHIP_PORT_TYPES : [])] : core.PLACEABLE_TYPES;
+      if (allowed.indexOf(item.type) === -1) continue;
+      if (item.type === "chip" && (typeof item.chipId !== "string" || !item.chipId || item.chipId.length > 80)) continue;
+      if (!Number.isSafeInteger(item.x) || !Number.isSafeInteger(item.y) ||
+          (!freeMode && (item.x < 0 || item.y < 0))) continue;
       out.push({
         type: item.type,
         x: item.x,
         y: item.y,
         orient: core.normalizeOrient(item.type, item.orient),
+        ...(item.type === "chip" ? { chipId: item.chipId } : {}),
+        ...(item.type === "prism" && item.facing !== undefined
+          ? { facing: core.normalizeOrient("directionalEmitter", item.facing) } : {}),
       });
     }
 
@@ -105,6 +111,51 @@
     };
   }
 
+  function normalizeChips(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    return raw.slice(0, 64).filter((chip) => {
+      if (!chip || typeof chip.id !== "string" || !chip.id || chip.id.length > 80 ||
+          typeof chip.name !== "string" || !chip.name.trim() || seen.has(chip.id)) return false;
+      seen.add(chip.id);
+      return true;
+    }).map((chip) => ({ id: chip.id, name: chip.name.trim().slice(0, 24),
+      placement: normalizePlacement(chip.placement, true, true),
+      ...(core.normalizeChipAppearance(chip.appearance) ? { appearance: core.normalizeChipAppearance(chip.appearance) } : {}),
+      ...(Array.isArray(chip.circuits) ? { circuits: chip.circuits.slice(0, core.MAX_CHIP_CELLS).filter((cell) => cell &&
+        Number.isSafeInteger(cell.x) && Number.isSafeInteger(cell.y) && Array.isArray(cell.placement)).map((cell) => ({
+        x: cell.x, y: cell.y, placement: normalizePlacement(cell.placement, true, true),
+      })) } : {}) }));
+  }
+
+  /** 删除芯片定义及所有存档、工作台中的对应实例，其他元件和成绩保持不变。 */
+  function removeChip(save, chipId) {
+    const next = normalizeSave(save);
+    let removedInstances = 0;
+    let removedSnapshotInstances = 0;
+    let removedNestedInstances = 0;
+    const matches = (item) => item.type === "chip" && item.chipId === chipId;
+    next.chips = (next.chips || []).filter((chip) => chip.id !== chipId);
+    next.chips = next.chips.map((chip) => {
+      removedNestedInstances += chip.placement.filter(matches).length;
+      const circuits = chip.circuits?.map((cell) => {
+        removedNestedInstances += cell.placement.filter(matches).length;
+        return { ...cell, placement: cell.placement.filter((item) => !matches(item)) };
+      });
+      return { ...chip, placement: chip.placement.filter((item) => !matches(item)), ...(circuits ? { circuits } : {}) };
+    });
+    for (const id of Object.keys(next.freeBoards || {})) {
+      const board = next.freeBoards[id];
+      removedInstances += board.filter(matches).length;
+      next.freeBoards[id] = board.filter((item) => !matches(item));
+    }
+    next.snapshots = next.snapshots.map((snapshot) => {
+      removedSnapshotInstances += snapshot.placement.filter(matches).length;
+      return { ...snapshot, placement: snapshot.placement.filter((item) => !matches(item)) };
+    });
+    return { save: normalizeSave(next), removedInstances, removedSnapshotInstances, removedNestedInstances };
+  }
+
   /**
    * 规范化一份存档。逐字段校验，坏字段丢弃而不是整体报废 ——
    * 存档损坏时尽量保住还能用的部分。
@@ -112,6 +163,8 @@
   function normalizeSave(raw) {
     const save = emptySave();
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return save;
+    if (Array.isArray(raw.chips)) save.chips = normalizeChips(raw.chips);
+    if (isInt(raw.stepMs) && raw.stepMs >= 50 && raw.stepMs <= 3600000) save.stepMs = raw.stepMs;
 
     if (raw.stars && typeof raw.stars === "object" && !Array.isArray(raw.stars)) {
       for (const id of Object.keys(raw.stars)) {
@@ -134,6 +187,27 @@
         save.snapshots.push(entry);
         if (save.snapshots.length >= MAX_SNAPSHOTS) break;
       }
+    }
+
+    // 自由布局独立保存，空数组也保留，避免清空后再次进入时被关卡布局覆盖。
+    if (raw.freeBoards && typeof raw.freeBoards === "object" && !Array.isArray(raw.freeBoards)) {
+      save.freeBoards = Object.fromEntries(Object.entries(raw.freeBoards)
+        .filter(([, board]) => Array.isArray(board))
+        .map(([id, board]) => [id, normalizePlacement(board, true)]));
+    }
+    if (raw.freeBoardVersions && typeof raw.freeBoardVersions === "object") {
+      save.freeBoardVersions = Object.fromEntries(Object.entries(raw.freeBoardVersions)
+        .filter(([, version]) => version === 2));
+    }
+    if (raw.freeViews && typeof raw.freeViews === "object") {
+      save.freeViews = Object.fromEntries(Object.entries(raw.freeViews).filter(([, view]) =>
+        view && Number.isFinite(view.x) && Number.isFinite(view.y) &&
+        Number.isFinite(view.cell) && view.cell >= 12 && view.cell <= 100)
+        .map(([id, view]) => [id, { x: view.x, y: view.y, cell: view.cell }]));
+    }
+    if (raw.session && typeof raw.session.levelId === "string" &&
+        (raw.session.mode === "level" || raw.session.mode === "free")) {
+      save.session = { levelId: raw.session.levelId, mode: raw.session.mode };
     }
 
     return save;
@@ -209,7 +283,7 @@
     const levelId = typeof item.levelId === "string" ? item.levelId : "";
     if (!levelId) return null;
 
-    const placement = normalizePlacement(item.placement);
+    const placement = normalizePlacement(item.placement, levelId.startsWith("free:"));
     if (placement.length === 0) return null;
 
     return {
@@ -217,6 +291,7 @@
       levelId,
       placement,
       savedAt: typeof item.savedAt === "string" ? item.savedAt : "",
+      ...(item.sceneVersion === 2 ? { sceneVersion: 2 } : {}),
     };
   }
 
@@ -231,7 +306,8 @@
       errors.push("快照名不得超过 " + MAX_NAME_LENGTH + " 个字符");
     }
 
-    const placement = normalizePlacement(entry ? entry.placement : null);
+    const placement = normalizePlacement(entry ? entry.placement : null,
+      Boolean(entry && typeof entry.levelId === "string" && entry.levelId.startsWith("free:")));
     if (placement.length === 0) errors.push("当前没有可保存的元件");
 
     if (errors.length > 0) return { ok: false, save: next, errors };
@@ -241,6 +317,7 @@
       levelId: entry && typeof entry.levelId === "string" ? entry.levelId : "",
       placement,
       savedAt: entry && typeof entry.savedAt === "string" ? entry.savedAt : "",
+      ...(entry && entry.sceneVersion === 2 ? { sceneVersion: 2 } : {}),
     };
 
     const index = next.snapshots.findIndex((existing) => existing.name === name);
@@ -269,6 +346,11 @@
   // ---------- 关卡文件 ----------
 
   const LEVEL_FIELDS = Object.freeze([
+    "chips",
+    "infinite",
+    "sceneVersion",
+    "mode",
+    "sourceLevelId",
     "schema",
     "version",
     "id",
@@ -292,7 +374,7 @@
     for (const field of LEVEL_FIELDS) {
       if (level[field] !== undefined) payload[field] = level[field];
     }
-    payload.placement = normalizePlacement(placement);
+    payload.placement = normalizePlacement(placement, level.mode === "free");
     return JSON.stringify(payload, null, 2);
   }
 
@@ -321,12 +403,72 @@
     const placement = Array.isArray(data.placement) ? data.placement : [];
     const placementCheck = levels.validatePlacement(data, placement);
     if (!placementCheck.ok) return fail(placementCheck.errors);
+    if (data.mode === "free") {
+      if (data.chips !== undefined && (!Array.isArray(data.chips) || data.chips.length > 64)) {
+        return fail(["芯片库必须是数组，且不超过 64 个芯片"]);
+      }
+      const chipIds = new Set();
+      for (const chip of data.chips || []) {
+        if (!chip || typeof chip.id !== "string" || !chip.id || chip.id.length > 80 || chipIds.has(chip.id) ||
+            typeof chip.name !== "string" || !chip.name.trim() || chip.name.length > 24 ||
+            !Array.isArray(chip.placement) || chip.placement.length > MAX_UNITS) {
+          return fail(["芯片定义、名称或内部布局非法"]);
+        }
+        chipIds.add(chip.id);
+        if (chip.appearance !== undefined && !core.normalizeChipAppearance(chip.appearance)) {
+          return fail(["芯片形状、颜色、文字或箭头非法"]);
+        }
+        if (chip.circuits !== undefined && (!chip.appearance || !Array.isArray(chip.circuits) || chip.circuits.length > core.MAX_CHIP_CELLS)) {
+          return fail(["分格内部线路必须对应有效的芯片形状"]);
+        }
+        const circuitPositions = new Set();
+        for (const cell of chip.circuits || []) {
+          if (!cell || !Number.isSafeInteger(cell.x) || !Number.isSafeInteger(cell.y) || !Array.isArray(cell.placement) ||
+              cell.placement.length > MAX_UNITS || circuitPositions.has(cell.x + "," + cell.y) ||
+              !core.shapeContains(core.normalizeChipAppearance(chip.appearance), cell.x, cell.y)) return fail(["格子内部线路位置非法或重复"]);
+          circuitPositions.add(cell.x + "," + cell.y);
+        }
+        for (const board of [chip.placement, ...(chip.circuits || []).map((cell) => cell.placement)]) {
+          const occupied = new Set();
+          for (const item of board) {
+          if (!item || !(core.CHIP_PORT_TYPES.includes(item.type) || core.FREE_PLACEABLE_TYPES.includes(item.type)) ||
+              !Number.isSafeInteger(item.x) || !Number.isSafeInteger(item.y) ||
+              (item.orient !== undefined && (!isInt(item.orient) || item.orient < 0 || item.orient >= core.orientStateCount(item.type)))) {
+            return fail(["芯片内部元件或朝向非法"]);
+          }
+          if (item.type === "chip" && (typeof item.chipId !== "string" || !item.chipId || item.chipId.length > 80)) {
+            return fail(["内部芯片缺少合法的 chipId"]);
+          }
+          if (item.facing !== undefined && (item.type !== "prism" || !isInt(item.facing) || item.facing < 0 || item.facing > 3)) {
+            return fail(["芯片内部棱镜的输入朝向必须是 0–3"]);
+          }
+          const key = item.x + "," + item.y;
+          if (occupied.has(key)) return fail(["芯片内部元件重叠"]);
+          occupied.add(key);
+          }
+        }
+      }
+      const chips = normalizeChips(data.chips);
+      const graphCheck = core.validateChipGraph(chips);
+      if (!graphCheck.ok) return fail(graphCheck.errors);
+      for (const chip of chips) {
+        const error = core.chipLayoutError(chip, chips);
+        if (error) return fail(["芯片「" + chip.name + "」：" + error]);
+      }
+      if (core.placementCollisions(placement, chips) || chips.some((chip) => core.placementCollisions(chip.placement, chips))) {
+        return fail(["芯片外观占用的格子与其他元件重叠"]);
+      }
+      if (placement.some((item) => item.type === "chip" && !chips.some((chip) => chip.id === item.chipId))) {
+        return fail(["文件包含未定义的芯片"]);
+      }
+      data.chips = chips;
+    }
 
     return {
       ok: true,
       errors: [],
       level: data,
-      placement: normalizePlacement(placement),
+      placement: normalizePlacement(placement, data.mode === "free"),
     };
   }
 
@@ -459,6 +601,8 @@
     createMemoryBackend,
     detectBackend,
     normalizePlacement,
+    normalizeChips,
+    removeChip,
     normalizeSnapshot,
     emptySave,
     normalizeSave,

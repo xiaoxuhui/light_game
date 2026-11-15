@@ -21,12 +21,15 @@
   const levels = globalThis.LightLevels;
   const renderer = globalThis.LightRenderer;
   const storage = globalThis.LightStorage;
-  if (!core || !engine || !levels || !renderer || !storage) return;
+  const simulationApi = globalThis.LightSimulation;
+  if (!core || !engine || !levels || !renderer || !storage || !simulationApi) return;
+  const simulation = simulationApi.createSimulation();
 
   /** 存档仓库。localStorage 不可用时自动降级为内存存档，游戏照常可玩。 */
   const store = storage.createStore();
 
   const ERASER = "__eraser";
+  const PAN = "__pan";
 
   /** 撤销栈上限。每个快照只是布局数组的浅拷贝，100 步既够用又不会无限吃内存。 */
   const MAX_HISTORY = 100;
@@ -38,6 +41,16 @@
     mirror: "反射镜",
     splitter: "分光镜",
     prism: "棱镜",
+    wall: "墙壁",
+    emitter: "四面光源",
+    bulb: "输出灯泡",
+    coldMirror: "冷镜",
+    hotMirror: "热镜",
+    directionalEmitter: "单向光源",
+    chip: "芯片",
+    io: "IO 口",
+    inputPort: "IO口",
+    outputPort: "IO口",
     [ERASER]: "橡皮",
   };
 
@@ -48,7 +61,38 @@
     hint: document.getElementById("level-hint"),
     toolbar: document.getElementById("toolbar"),
     btnLevels: document.getElementById("btn-levels"),
+    btnMode: document.getElementById("btn-mode"),
+    btnChallenge: document.getElementById("btn-challenge"),
+    modeHint: document.getElementById("mode-hint"),
+    btnCopyLevel: document.getElementById("btn-copy-level"),
+    btnApplyLevel: document.getElementById("btn-apply-level"),
+    viewControls: document.getElementById("view-controls"),
+    btnPan: document.getElementById("btn-pan"),
+    btnZoomIn: document.getElementById("btn-zoom-in"),
+    btnZoomOut: document.getElementById("btn-zoom-out"),
+    btnHome: document.getElementById("btn-home"),
+    btnChips: document.getElementById("btn-chips"),
+    chipEditor: document.getElementById("chip-editor"),
+    chipName: document.getElementById("chip-name"),
+    btnChipDone: document.getElementById("btn-chip-done"),
+    btnAppearance: document.getElementById("btn-appearance"),
+    btnCellAppearance: document.getElementById("btn-cell-appearance"),
+    chipEditorHint: document.getElementById("chip-editor-hint"),
+    chipShapeEditor: document.getElementById("chip-shape-editor"),
+    chipShapeName: document.getElementById("chip-shape-name"),
+    btnShapeNext: document.getElementById("btn-shape-next"),
+    btnShapeCancel: document.getElementById("btn-shape-cancel"),
+    btnShapeClear: document.getElementById("btn-shape-clear"),
+    btnRun: document.getElementById("btn-run"),
+    btnStep: document.getElementById("btn-step"),
+    btnReset: document.getElementById("btn-reset"),
+    stepSeconds: document.getElementById("step-seconds"),
+    simulationStatus: document.getElementById("simulation-status"),
+    chipInspection: document.getElementById("chip-inspection"),
+    chipInspectionName: document.getElementById("chip-inspection-name"),
+    btnInspectionBack: document.getElementById("btn-inspection-back"),
     btnClear: document.getElementById("btn-clear"),
+    btnPrismColors: document.getElementById("btn-prism-colors"),
     btnUndo: document.getElementById("btn-undo"),
     btnRedo: document.getElementById("btn-redo"),
     btnSnapshots: document.getElementById("btn-snapshots"),
@@ -63,13 +107,25 @@
     sheetActions: document.getElementById("sheet-actions"),
   };
 
-  // 关于 prefers-reduced-motion：画布里没有任何时间驱动的动画（每帧都是静态绘制，
-  // 静置时脏标记为假、一帧都不画），所以没有需要在 JS 里冻结的东西。
-  // 唯一的动效是按钮过渡，由 styles/main.css 的媒体查询负责关掉。
-  // 阶段 3 复查时删掉了原先那个只挂 change 监听、从不被读取的 matchMedia 变量 —— 它是死代码。
+  // prefers-reduced-motion 关闭按钮过渡；离散组件时钟属于玩法，用空格暂停。
+  // 两拍之间仍用脏标记绘制，不增加逐帧的光线移动动画。
 
   const state = {
     levelId: null,
+    mode: "level",
+    freeLevel: null,
+    camera: null,
+    chipDraft: null,
+    shapeDraft: null,
+    cellDraft: null,
+    parentWorkspace: null,
+    selectedChipId: null,
+    inspection: null,
+    paused: false,
+    lastStep: 0,
+    stepMs: simulationApi.STEP_MS,
+    simulationPending: false,
+    silentInitialization: true,
     placement: [],
     selectedType: null,
     cursor: null,
@@ -87,6 +143,7 @@
   };
 
   const toolButtons = new Map();
+  let chipDeleteUndo = null;
 
   // ---------- 画布尺寸与 DPR ----------
 
@@ -103,27 +160,28 @@
       canvas.height = height;
       context.setTransform(1, 0, 0, 1, 0, 0);
     }
+    if (state.mode === "free") recompute();
     markDirty();
   }
 
   // ---------- 关卡与求解 ----------
 
   function currentLevel() {
+    if (state.mode === "free") return state.freeLevel;
     return state.levelId ? levels.getLevel(state.levelId) : null;
-  }
-
-  function cellIndex(x, y) {
-    const level = currentLevel();
-    if (!level) return -1;
-    return y * level.cols + x;
   }
 
   function cellOf(x, y) {
     if (!state.result) return null;
-    return state.result.grid.cells[cellIndex(x, y)] || null;
+    return engine.cellAt(state.result.grid, x, y);
   }
 
   function findPlacement(x, y) {
+    const part = state.result?.grid.infinite && state.result.grid.byPosition.get(x + "," + y);
+    if (part?.type === "chipPart") {
+      const owner = state.result.grid.byPosition.get(part.chipAnchor);
+      x = owner.x; y = owner.y;
+    }
     for (const item of state.placement) {
       if (item.x === x && item.y === y) return item;
     }
@@ -138,6 +196,14 @@
     return count;
   }
 
+  function availableTypes(level) {
+    if (state.shapeDraft) return [];
+    if (state.chipDraft?.appearance && !state.cellDraft) return [];
+    const types = state.chipDraft ? [...core.FREE_PLACEABLE_TYPES, "inputPort"]
+      : state.mode === "free" ? core.FREE_PLACEABLE_TYPES : core.PLACEABLE_TYPES;
+    return types.filter((type) => (level.inventory[type] || 0) > 0);
+  }
+
   function quotaLeft(type) {
     const level = currentLevel();
     if (!level) return 0;
@@ -147,11 +213,33 @@
   function recompute() {
     const level = currentLevel();
     if (!level) return;
-    state.result = engine.solve(level, state.placement);
+    const camera = state.camera;
+    const halfW = camera ? canvas.width / state.dpr / camera.cell / 2 : 0;
+    const halfH = camera ? canvas.height / state.dpr / camera.cell / 2 : 0;
+    const view = camera ? {
+      minX: camera.x - halfW, maxX: camera.x + halfW,
+      minY: camera.y - halfH, maxY: camera.y + halfH,
+    } : undefined;
+    if (state.shapeDraft) {
+      state.result = engine.solve({ ...level, infinite: true }, [], { view });
+      state.simulationPending = false;
+      return;
+    }
+    if (state.inspection) {
+      const root = state.inspection.root;
+      const rootResult = simulation.solve({ ...root.level, chips: store.data.chips || [] }, root.placement,
+        { inspection: { path: state.inspection.path, view } });
+      const parentResult = state.inspection.parentPath === "root" ? rootResult : simulation.getView(state.inspection.parentPath);
+      state.inspection.signals = parentResult?.grid.cells.find((cell) => cell.type === "chip" &&
+        cell.x === state.inspection.cell.x && cell.y === state.inspection.cell.y);
+      state.result = simulation.getView(state.inspection.path);
+    } else state.result = simulation.solve({ ...level, chips: store.data.chips || [] }, state.placement, { view });
+    state.simulationPending = simulation.pending;
   }
 
   /** 一次会写进撤销栈的改动：先记历史，再重算，最后落盘 */
   function commit() {
+    state.silentInitialization = false;
     pushHistory();
     refresh(false);
     rememberBoard();
@@ -162,7 +250,8 @@
     recompute();
     updateHud();
     markDirty();
-    checkCompletion(silent === true);
+    checkCompletion(silent === true || state.silentInitialization);
+    if (!state.simulationPending) state.silentInitialization = false;
   }
 
   // ---------- 存档 ----------
@@ -172,9 +261,31 @@
    * 只留这一个写入点，撤销/重做也走它，避免出现「存档与画面不一致」。
    */
   function rememberBoard() {
+    if (state.inspection || state.shapeDraft) return;
     const level = currentLevel();
     if (!level) return;
-    store.replace(storage.setBoard(store.data, level.id, state.placement));
+    if (state.chipDraft) {
+      if (state.cellDraft) {
+        const cell = { x: state.cellDraft.x, y: state.cellDraft.y, placement: clonePlacement(state.placement) };
+        state.chipDraft.circuits = [...state.chipDraft.circuits.filter((entry) => entry.x !== cell.x || entry.y !== cell.y), cell];
+      }
+      const entry = { id: state.chipDraft.id, name: state.chipDraft.name,
+        placement: state.chipDraft.appearance ? clonePlacement(state.chipDraft.basePlacement || []) : clonePlacement(state.placement),
+        ...(state.chipDraft.appearance ? { appearance: state.chipDraft.appearance,
+          circuits: state.chipDraft.circuits.map((cell) => ({ ...cell, placement: clonePlacement(cell.placement) })) } : {}) };
+      store.replace({ ...store.data, chips: [...(store.data.chips || []).filter((c) => c.id !== entry.id), entry] });
+      store.persist();
+      return;
+    }
+    if (state.mode === "free") {
+      store.replace({ ...store.data, freeBoardVersions: {
+        ...store.data.freeBoardVersions, [state.levelId]: 2,
+      }, freeViews: { ...store.data.freeViews, [state.levelId]: state.camera }, freeBoards: {
+        ...store.data.freeBoards, [state.levelId]: clonePlacement(state.placement),
+      } });
+    } else {
+      store.replace(storage.setBoard(store.data, level.id, state.placement));
+    }
     store.persist();
   }
 
@@ -198,6 +309,8 @@
       x: item.x,
       y: item.y,
       orient: item.orient,
+      ...(item.type === "chip" ? { chipId: item.chipId } : {}),
+      ...(item.type === "prism" ? { facing: item.facing || 0 } : {}),
     }));
   }
 
@@ -208,7 +321,7 @@
         a[i].type !== b[i].type ||
         a[i].x !== b[i].x ||
         a[i].y !== b[i].y ||
-        a[i].orient !== b[i].orient
+        a[i].orient !== b[i].orient || a[i].chipId !== b[i].chipId || a[i].facing !== b[i].facing
       ) {
         return false;
       }
@@ -243,6 +356,7 @@
 
   /** 撤销（delta = −1）与重做（delta = +1）走同一条路径，保证两者行为对称 */
   function stepHistory(delta) {
+    if (state.inspection) return false;
     const next = state.historyIndex + delta;
     if (next < 0 || next >= state.history.length) return false;
 
@@ -281,11 +395,25 @@
       result: state.result,
       cursor: state.cursor,
       hover: state.hover,
+      camera: state.mode === "free" ? state.camera : null,
+      dpr: state.dpr,
+      chips: [...(store.data.chips || []), ...(state.inspection?.virtualDefinitions || [])],
+      compositeEditor: state.chipDraft?.appearance && !state.cellDraft ? state.chipDraft : null,
+      shapeEditor: state.shapeDraft ? { ...state.shapeDraft.chip, appearance: {
+        shape: state.placement.map((point) => ({ x: point.x, y: point.y })),
+        cells: (state.shapeDraft.chip.appearance?.cells || []).filter((cell) => state.placement.some((point) => point.x === cell.x && point.y === cell.y)),
+        showName: false,
+      } } : null,
     });
   }
 
-  function frame() {
+  function frame(now) {
     state.frameId = requestAnimationFrame(frame);
+    if (!state.paused && now - state.lastStep >= state.stepMs) {
+      state.lastStep = now;
+      simulation.advance();
+      refresh(false);
+    }
     if (!state.dirty) return;
     state.dirty = false;
     paint();
@@ -294,6 +422,7 @@
   function start() {
     if (state.running) return;
     state.running = true;
+    state.lastStep = performance.now();
     state.frameId = requestAnimationFrame(frame);
   }
 
@@ -306,6 +435,20 @@
   // ---------- 操作 ----------
 
   function handleCell(x, y) {
+    if (state.inspection) return;
+    if (state.shapeDraft) {
+      const index = state.placement.findIndex((point) => point.x === x && point.y === y);
+      if (index >= 0) state.placement.splice(index, 1);
+      else {
+        if (state.placement.length >= core.MAX_CHIP_CELLS) return;
+        state.placement.push({ type: "shape", x, y, orient: 0 });
+      }
+      commit(); return;
+    }
+    if (state.chipDraft?.appearance && !state.cellDraft) {
+      if (core.shapeContains(state.chipDraft.appearance, x, y)) openChipCell(x, y);
+      return;
+    }
     const level = currentLevel();
     if (!level) return;
 
@@ -321,29 +464,119 @@
       return;
     }
 
-    if (!state.selectedType) return;
+    if (!state.selectedType || state.selectedType === PAN) return;
+    if (state.placement.length >= levels.MAX_UNITS) return;
     if (cellOf(x, y)) return; // 关卡预设元件不可覆盖
     if (quotaLeft(state.selectedType) <= 0) return;
+    if (state.selectedType === "chip" && !state.selectedChipId) {
+      showChipLibrary();
+      return;
+    }
+    if (state.selectedType === "chip" && state.chipDraft &&
+        core.chipDependsOn(store.data.chips || [], state.selectedChipId, state.chipDraft.id)) {
+      showErrors("无法放置", ["芯片不能直接或间接包含自身。"]);
+      return;
+    }
 
-    state.placement.push({
+    const candidate = {
       type: state.selectedType,
       x,
       y,
       orient: core.ORIENT.SLASH,
-    });
+      ...(state.selectedType === "chip" ? { chipId: state.selectedChipId } : {}),
+      ...(state.selectedType === "prism" ? { facing: 0 } : {}),
+    };
+    if (state.mode === "free" && core.placementCollisions([...state.placement, candidate], store.data.chips || [])) {
+      showErrors("无法放置", ["芯片占用的格子与其他元件重叠，请选择空旷的位置。"]);
+      return;
+    }
+    state.placement.push(candidate);
     commit();
   }
 
   function rotateAt(x, y) {
+    if (state.inspection) return;
     const item = findPlacement(x, y);
     if (!item || !core.isRotatable(item.type)) return;
-    // 态数由元件决定：反射镜 / 分光镜 2 态，棱镜 3 态
-    item.orient = core.cycleOrient(item.type, item.orient);
+    const previous = { ...item };
+    rotateItem(item);
+    if (state.mode === "free" && core.placementCollisions(state.placement, store.data.chips || [])) {
+      Object.assign(item, previous);
+      showErrors("无法旋转", ["旋转后的芯片会与其他元件重叠，请先移开相邻元件。"]);
+      return;
+    }
+    commit();
+  }
+
+  function rotateItem(item) {
+    if (item.type === "prism") item.facing = ((item.facing || 0) + 1) % 4;
+    else item.orient = core.cycleOrient(item.type, item.orient);
+  }
+
+  function rotateAll() {
+    if (state.inspection) return;
+    let changed = false;
+    const previous = clonePlacement(state.placement);
+    for (const item of state.placement) {
+      if (!core.isRotatable(item.type)) continue;
+      rotateItem(item); changed = true;
+    }
+    if (changed && state.mode === "free" && core.placementCollisions(state.placement, store.data.chips || [])) {
+      state.placement = previous;
+      showErrors("无法整体旋转", ["旋转后的芯片与其他元件重叠。"]);
+    } else if (changed) commit();
+  }
+
+  function deleteAll() {
+    if (state.inspection || state.placement.length === 0) return;
+    state.placement = [];
+    disarmClear(); commit();
+  }
+
+  function togglePause() {
+    state.paused = !state.paused;
+    state.lastStep = performance.now();
+    updateHud(); markDirty();
+  }
+
+  function stepOnce() {
+    if (!state.paused) return;
+    simulation.advance();
+    state.lastStep = performance.now();
+    refresh(false);
+  }
+
+  function resetSimulation() {
+    simulation.reset();
+    state.lastStep = performance.now();
+    state.silentInitialization = true;
+    refresh(true);
+  }
+
+  function changeStepDuration() {
+    const seconds = Number(dom.stepSeconds.value);
+    if (!Number.isFinite(seconds) || seconds < 0.05 || seconds > 3600) {
+      dom.stepSeconds.value = String(state.stepMs / 1000);
+      return;
+    }
+    state.stepMs = Math.round(seconds * 1000);
+    state.lastStep = performance.now();
+    dom.stepSeconds.value = String(state.stepMs / 1000);
+    store.replace({ ...store.data, stepMs: state.stepMs }); store.persist();
+    updateHud();
+  }
+
+  function cyclePrismColors() {
+    if (state.inspection) return;
+    const item = state.cursor && findPlacement(state.cursor.x, state.cursor.y);
+    if (!item || item.type !== "prism") return;
+    item.orient = core.cycleOrient("prism", item.orient);
     commit();
   }
 
   function removeAt(x, y) {
-    const index = state.placement.findIndex((item) => item.x === x && item.y === y);
+    if (state.inspection) return;
+    const index = state.placement.indexOf(findPlacement(x, y));
     if (index === -1) return;
     state.placement.splice(index, 1);
     commit();
@@ -366,6 +599,7 @@
 
   /** 清空会一次性抹掉整个布局，因此要点两次 —— 第一次把按钮切成确认态 */
   function requestClear() {
+    if (state.inspection) return;
     if (state.placement.length === 0) return;
 
     if (!clearArmed) {
@@ -393,6 +627,7 @@
    * @param {boolean} silent 进入关卡时的首次判定不弹结算，只记录成绩
    */
   function checkCompletion(silent) {
+    if (state.mode === "free" || state.inspection) return;
     const level = currentLevel();
     if (!level || !state.result) return;
 
@@ -405,18 +640,44 @@
         rememberStars(level.id, stars);
       }
       updateHud();
-      if (!silent) showResult(stars, level);
+      if (!silent && !(level.par === 0 && state.placement.length === 0)) showResult(stars, level);
     }
     state.wasAllLit = lit;
   }
 
   // ---------- HUD ----------
 
+  function chipSignalText(cell) {
+    const sides = ["上", "右上", "右", "右下", "下", "左下", "左", "左上"];
+    const ports = cell.portDirections || [];
+    const directions = ports.map((dir) => sides[dir]).join("、") || "无";
+    const inputs = (cell.inputColors || []).map((color, dir) => color ? dir : -1).filter((dir) => dir >= 0);
+    const matched = inputs.filter((dir) => cell.acceptedInputColors ? cell.acceptedInputColors[dir] : ports.includes(dir));
+    const outputs = (cell.outputColors || []).map((color, dir) => color ? sides[dir] : "").filter(Boolean);
+    const status = !inputs.length ? "尚无外部来光" : matched.length ? "已接收入光" : "来光未匹配IO口，已挡光";
+    const outputStatus = !ports.length ? "未设置IO口" : outputs.length ? "正在向" + outputs.join("、") + "输出" :
+      matched.length ? "IO口已设置，本拍无输出信号" : "IO口已设置，等待信号";
+    return "芯片IO箭头：" + directions + " · " + status + " · " + outputStatus;
+  }
+
   function updateHud() {
     const level = currentLevel();
     if (!level) return;
+    document.body.dataset.mode = state.mode;
 
     dom.title.textContent = level.title;
+    if (state.inspection) dom.title.textContent = "运行过程 · " + state.inspection.name;
+    if (state.chipDraft) dom.title.textContent = "编辑芯片 · " + state.chipDraft.name;
+    if (state.shapeDraft) dom.title.textContent = "绘制芯片形状";
+    const outerEditor = Boolean(state.chipDraft?.appearance && !state.cellDraft);
+    if (outerEditor) dom.title.textContent = "外层网格 · " + state.chipDraft.name;
+    else if (state.cellDraft && state.chipDraft) dom.title.textContent = "编辑格子 (" + state.cellDraft.x + "," + state.cellDraft.y + ") · " + state.chipDraft.name;
+    dom.btnChipDone.textContent = state.cellDraft ? "保存并返回外层网格" : "保存并返回实验板";
+    dom.btnShapeNext.disabled = !state.placement.length;
+    dom.btnShapeClear.disabled = !state.placement.length;
+    dom.btnCellAppearance.hidden = !state.cellDraft;
+    dom.chipEditorHint.textContent = outerEditor ? "点击一个格子，进入它独立的内部网格。" :
+      "每格内部沿用原芯片的四向 IO 规则。点击旋转，R 重置运行过程。";
 
     const chapters = levels.listChapters();
     let chapterName = "教学";
@@ -424,8 +685,30 @@
       if (chapter.levelIds.indexOf(level.id) !== -1) chapterName = chapter.title;
     }
     dom.sub.textContent = "第 " + level.chapter + " 章 · " + chapterName;
+    const free = state.mode === "free";
+    if (free) dom.sub.textContent = "自由模式 · 无限网格 · 不计星级";
+    dom.btnMode.setAttribute("aria-pressed", String(free));
+    dom.btnChallenge.setAttribute("aria-pressed", String(!free));
+    dom.modeHint.textContent = free ? "自由实验，点「关卡模式」随时返回" : "挑战关卡，收集星星";
+    const internal = Boolean(state.chipDraft || state.inspection || state.shapeDraft);
+    dom.btnCopyLevel.hidden = !free || internal;
+    dom.btnApplyLevel.hidden = !free || internal;
+    dom.btnChips.hidden = !free || Boolean(state.inspection) || outerEditor || Boolean(state.shapeDraft);
+    dom.btnMode.disabled = internal;
+    dom.btnChallenge.disabled = internal;
+    dom.btnLevels.disabled = internal;
+    dom.btnImport.disabled = internal;
+    dom.btnExport.disabled = internal;
+    dom.btnSnapshots.disabled = internal;
+    dom.toolbar.hidden = Boolean(state.inspection || state.shapeDraft) || outerEditor;
+    dom.btnRun.textContent = state.paused ? "开始（空格）" : "暂停（空格）";
+    dom.btnRun.setAttribute("aria-pressed", String(state.paused));
+    dom.btnStep.hidden = !state.paused;
+    dom.btnStep.disabled = !state.paused;
+    dom.simulationStatus.textContent = (state.paused ? "已暂停" : "运行中") + " · 第 " + simulation.tick + " 拍 · 每拍 " + state.stepMs / 1000 + " 秒";
+    dom.viewControls.hidden = !free;
 
-    const best = state.stars[level.id] || 0;
+    const best = free ? 0 : state.stars[level.id] || 0;
     const cleared = best > 0;
     const nextId = levels.nextLevelId(level.id);
 
@@ -433,21 +716,56 @@
     dom.stars.setAttribute("aria-label", cleared ? "已获得 " + best + " 星" : "尚未通关");
 
     // 「下一关」是常驻入口：通关结算浮层被关掉之后，玩家仍然有路可走
-    dom.btnNext.hidden = !nextId;
+    dom.btnNext.hidden = free || !nextId;
     dom.btnNext.disabled = !cleared;
 
     dom.hint.textContent = level.hint;
 
-    dom.btnClear.disabled = state.placement.length === 0;
+    dom.btnClear.disabled = state.placement.length === 0 || Boolean(state.inspection);
     if (dom.btnClear.disabled) disarmClear();
-    dom.btnUndo.disabled = !canUndo();
-    dom.btnRedo.disabled = !canRedo();
+    dom.btnUndo.disabled = !canUndo() || Boolean(state.inspection);
+    dom.btnRedo.disabled = !canRedo() || Boolean(state.inspection);
+    dom.btnPrismColors.hidden = Boolean(state.inspection) || !(state.cursor && findPlacement(state.cursor.x, state.cursor.y)?.type === "prism");
 
     // 状态行承载两种反馈，按优先级拼接：
     //   1. 光路过载 —— 这是「显示可能不完整」，必须说清楚，否则玩家会以为关卡坏了
     //   2. 通关 —— 静默通关（进关时目标就已满足）没有结算浮层，只能靠这一行
     const overloaded = Boolean(state.result && state.result.overflow);
     const messages = [];
+    if (state.shapeDraft) messages.push("独立无限网格 · 已选 " + state.placement.length + " 格 · 点击翻转，下一步后再进入方块内部 · 名字可以最后再取");
+    else if (state.inspection) messages.push("当前实例实时状态 · 只读查看，不重置过程 · 空格暂停／继续");
+    else if (state.chipDraft) messages.push("芯片自动保存 · 编辑完成后点「保存并返回实验板」");
+    else if (free) messages.push("布局自动保存 · 点「关卡模式」保留两边布局，或「应用到关卡」带回镜片布局");
+    if (outerEditor) messages.push("点击一个形状格，进入这格独立的内部网格 · 外环按对应格子收发光");
+    if (state.chipDraft && !outerEditor) {
+      const ports = state.placement.filter((cell) => core.isInputPort(cell.type)).length;
+      messages.push("IO口 " + ports + " 个 · 箭头指向内部，向外出光方向相反 · 点击旋转");
+      if (!ports) messages.push("未设置IO口，芯片无法与外部传光");
+    }
+    if (free && !state.chipDraft) {
+      const focus = state.hover || state.cursor;
+      let chip = state.inspection ? state.inspection.signals : focus && state.result.grid.cells.find((cell) =>
+        cell.type === "chip" && cell.x === focus.x && cell.y === focus.y);
+      if (!chip && !state.inspection) {
+        const chips = state.result.grid.cells.filter((cell) => cell.type === "chip");
+        if (chips.length === 1) chip = chips[0];
+      }
+      const focusedThermal = focus && state.result.grid.cells.some((cell) =>
+        ["coldMirror", "hotMirror"].includes(cell.type) && cell.x === focus.x && cell.y === focus.y);
+      if (chip && !focusedThermal) messages.push(chipSignalText(chip));
+    }
+    if (free) {
+      const focus = state.hover || state.cursor;
+      const thermal = focus && state.result.grid.cells.find((cell) =>
+        ["coldMirror", "hotMirror"].includes(cell.type) && cell.x === focus.x && cell.y === focus.y);
+      if (thermal) messages.push(TYPE_NAMES[thermal.type] + " · " + (thermal.open ? "开启通光" : "关闭挡光") +
+        " · 通光轴：" + (core.thermalAxis(thermal.type, thermal.orient).dx ? "左右" : "上下") +
+        (thermal.type === "coldMirror" ? " · 侧面输入：" + (thermal.receiving ? "有光 → 取反后关闭" : "无光 → 取反后开启") + " · 延迟1拍"
+          : " · 侧面输入：" + (thermal.receiving ? "有光 → 正向开启" : "无光 → 正向关闭") + " · 延迟1拍"));
+    }
+    if (free && state.result.targets.length) {
+      messages.push("灯泡亮起 " + state.result.targets.filter((t) => t.lit).length + " / " + state.result.targets.length);
+    }
     if (overloaded) {
       messages.push("光路过于复杂，已停止追踪，画面可能不完整 · 减少一些元件再试");
     }
@@ -466,6 +784,8 @@
   }
 
   function updateToolbar() {
+    dom.btnPan.setAttribute("aria-pressed", String(state.selectedType === PAN));
+    canvas.style.cursor = state.mode === "free" && (state.selectedType === PAN || !state.selectedType) ? "grab" : "crosshair";
     for (const entry of toolButtons) {
       const type = entry[0];
       const button = entry[1];
@@ -478,7 +798,7 @@
       }
 
       const left = quotaLeft(type);
-      count.textContent = "×" + left;
+      count.textContent = state.mode === "free" ? "不限" : "×" + left;
       button.setAttribute("aria-pressed", String(state.selectedType === type));
       button.disabled = left <= 0;
     }
@@ -488,7 +808,7 @@
     dom.toolbar.innerHTML = "";
     toolButtons.clear();
 
-    const types = core.PLACEABLE_TYPES.filter((type) => (level.inventory[type] || 0) > 0);
+    const types = availableTypes(level);
     // 一个元件都不发的关卡（如教学第 1 关）不摆橡皮，免得只剩一个永远禁用的按钮让人困惑
     if (types.length === 0) return;
     types.push(ERASER);
@@ -499,7 +819,10 @@
       button.className = "tool";
       button.dataset.type = type === ERASER ? "eraser" : type;
       button.setAttribute("aria-pressed", "false");
-      button.title = TYPE_NAMES[type] || type;
+      button.title = type === "prism" ? "棱镜：左键旋转输入方向，C 切换 RGB 出口顺序"
+        : type === "coldMirror" ? "冷镜：自带侧面非门，侧面有光一拍后关闭，无光一拍后开启；横镜通上下、竖镜通左右，通路光不触发开关，侧面控制光不穿透"
+        : type === "hotMirror" ? "热镜：初始挡光，侧面有光一拍后开启、无光一拍后关闭；通路光不触发开关，横镜通上下、竖镜通左右，侧面控制光不穿透"
+        : core.CHIP_PORT_TYPES.includes(type) ? "IO口：箭头表示外到内；向下箭头从上方接入、向上方输出，其他方向类推；侧面挡光；点击转90°，两次转180°" : TYPE_NAMES[type] || type;
 
       const glyph = document.createElement("span");
       glyph.className = type === ERASER ? "tool__glyph tool__glyph--eraser" : "tool__glyph";
@@ -519,6 +842,7 @@
       }
 
       button.addEventListener("click", () => {
+        if (type === "chip") { showChipLibrary(); return; }
         state.selectedType = state.selectedType === type ? null : type;
         updateToolbar();
       });
@@ -538,6 +862,7 @@
 
   function hideOverlay() {
     dom.overlay.hidden = true;
+    chipDeleteUndo = null;
   }
 
   function addAction(label, handler, primary) {
@@ -699,7 +1024,8 @@
         button.appendChild(count);
 
         button.addEventListener("click", () => {
-          state.placement = clonePlacement(item.placement);
+          state.placement = state.mode === "free" && item.sceneVersion !== 2
+            ? seedFreeBoard(levels.getLevel(state.levelId), item.placement) : clonePlacement(item.placement);
           state.wasAllLit = false;
           hideOverlay();
           commit();
@@ -745,6 +1071,7 @@
         levelId: level.id,
         placement: state.placement,
         savedAt: new Date().toISOString(),
+        ...(state.mode === "free" ? { sceneVersion: 2 } : {}),
       });
 
       if (!result.ok) {
@@ -777,7 +1104,8 @@
     const level = currentLevel();
     if (!level) return;
 
-    const text = storage.serializeLevelFile(level, state.placement);
+    const text = storage.serializeLevelFile(state.mode === "free"
+      ? { ...level, chips: store.data.chips || [] } : level, state.placement);
     const blob = new Blob([text], { type: "application/json" });
     if (!storage.downloadFile(storage.levelFileName(level), blob)) {
       showErrors("导出失败", ["当前环境不支持直接下载文件"]);
@@ -799,6 +1127,30 @@
       return;
     }
 
+    if (parsed.level.mode === "free") {
+      const source = levels.getLevel(parsed.level.sourceLevelId);
+      const expected = source ? createFreeLevel(source) : null;
+      const legacy = source ? { ...source, fixed: source.fixed.map((item) => item.type === "emitter"
+        ? { ...item, dir: "all", color: 7 } : item) } : null;
+      const definition = parsed.level.infinite ? expected : legacy;
+      const matches = definition && ["cols", "rows", "fixed", "targets"].every((key) =>
+        JSON.stringify(definition[key]) === JSON.stringify(parsed.level[key]));
+      if (!matches) {
+        showErrors("导入失败", ["找不到匹配的原关卡，请先导入原关卡，再导入自由布局。"]);
+        return;
+      }
+      selectLevel(source.id);
+      enterFreeMode();
+      if (parsed.level.chips) {
+        const imported = parsed.level.chips;
+        store.replace({ ...store.data, chips: [...(store.data.chips || []).filter((chip) =>
+          !imported.some((other) => other.id === chip.id)), ...imported] });
+      }
+      state.placement = parsed.level.infinite ? clonePlacement(parsed.placement) : seedFreeBoard(source, parsed.placement);
+      commit();
+      return;
+    }
+
     // 与已有 id 冲突时（内置关卡，或先前导入过的同名关卡）不覆盖关卡定义，
     // 只把文件里的布局应用上去：关卡是骨架，布局才是玩家改出来的东西。
     const registered = levels.registerLevel(parsed.level);
@@ -816,24 +1168,393 @@
 
   // ---------- 关卡切换 ----------
 
-  function selectLevel(id) {
-    const level = levels.getLevel(id);
-    if (!level) return;
+  function rememberSession() {
+    store.replace({ ...store.data, session: { levelId: state.levelId, mode: state.mode } });
+    store.persist();
+  }
 
-    state.levelId = id;
-    // 回到某关时接着上次的布局继续 —— 自动存档的意义就在这儿
-    state.placement = clonePlacement(storage.getBoard(store.data, id));
+  function enterFreeMode() {
+    const source = levels.getLevel(state.levelId);
+    if (!source || state.mode === "free") return;
+    rememberBoard();
+    simulation.reset(); state.lastStep = performance.now();
+    const saved = store.data.freeBoards && store.data.freeBoards[source.id];
+    state.freeLevel = createFreeLevel(source);
+    state.mode = "free";
+    state.placement = saved && store.data.freeBoardVersions && store.data.freeBoardVersions[source.id] === 2
+      ? clonePlacement(saved) : seedFreeBoard(source, saved || state.placement);
+    state.camera = store.data.freeViews && store.data.freeViews[source.id]
+      ? { ...store.data.freeViews[source.id] } : homeCamera(source);
+    resetBoardView();
+    rememberBoard();
+    rememberSession();
+  }
+
+  function createFreeLevel(source) {
+    return {
+      ...source,
+      mode: "free",
+      infinite: true,
+      sceneVersion: 2,
+      sourceLevelId: source.id,
+      id: "free:" + source.id,
+      title: "自由实验 · " + source.title,
+      fixed: [],
+      targets: [],
+      inventory: Object.fromEntries(core.FREE_PLACEABLE_TYPES.map((type) => [type, levels.MAX_UNITS])),
+      hint: "点击旋转元件，R 重置运行过程。拖动画布平移，滚轮或＋／－缩放。",
+    };
+  }
+
+  function seedFreeBoard(source, optics) {
+    return [...clonePlacement(optics), ...source.fixed.map((item) => ({
+      type: item.type, x: item.x, y: item.y, orient: 0,
+    })), ...source.targets.map((item) => ({ type: "bulb", x: item.x, y: item.y, orient: 0 }))];
+  }
+
+  function homeCamera(source) {
+    return { x: source.cols / 2, y: source.rows / 2, cell: 36 };
+  }
+
+  function openShapeGrid(chip, creating = false) {
+    if (!chip || state.shapeDraft || state.inspection) return;
+    rememberBoard(); hideOverlay();
+    const workspace = {};
+    for (const key of ["placement", "freeLevel", "camera", "history", "historyIndex", "selectedType", "cursor", "hover", "chipDraft", "cellDraft", "parentWorkspace"]) workspace[key] = state[key];
+    state.shapeDraft = { chip: globalThis.structuredClone(chip), creating, workspace };
+    state.chipDraft = null; state.cellDraft = null;
+    state.freeLevel = { ...workspace.freeLevel, infinite: true, insideChip: false,
+      hint: "这是独立的无限形状网格。点击任意格子翻转选中／取消；拖动平移，滚轮缩放。下一步后再进入方块内部。" };
+    const points = chip.appearance ? core.appearancePoints(chip.appearance) : creating ? [] : [{ x: 0, y: 0 }];
+    state.placement = points.map((point) => ({ type: "shape", x: point.x, y: point.y, orient: 0 }));
+    const anchor = chip.appearance ? core.appearanceAnchor(chip.appearance) : { x: 0, y: 0 };
+    state.camera = { x: anchor.x, y: anchor.y, cell: 36 };
+    state.selectedType = null; state.cursor = null; state.hover = null;
+    dom.chipEditor.hidden = true; dom.chipShapeEditor.hidden = false;
+    dom.chipShapeName.value = creating ? "" : chip.name;
+    simulation.reset(); state.lastStep = performance.now();
+    resetHistory(); buildToolbar(currentLevel()); refresh(true);
+  }
+
+  function restoreShapeWorkspace() {
+    if (!state.shapeDraft) return;
+    const workspace = state.shapeDraft.workspace;
+    state.shapeDraft = null; Object.assign(state, workspace);
+    dom.chipShapeEditor.hidden = true; dom.chipEditor.hidden = !state.chipDraft;
+    simulation.reset(); state.lastStep = performance.now();
+    buildToolbar(currentLevel()); refresh(true);
+  }
+
+  function finishShapeGrid() {
+    if (!state.shapeDraft || !state.placement.length) return;
+    const draft = state.shapeDraft;
+    const current = (store.data.chips || []).find((chip) => chip.id === draft.chip.id) || draft.chip;
+    const shape = state.placement.map((point) => ({ x: point.x, y: point.y }));
+    const selected = new Set(shape.map((point) => point.x + "," + point.y));
+    const appearance = core.normalizeChipAppearance({ shape, showName: current.appearance?.showName !== false,
+      cells: (current.appearance?.cells || []).filter((cell) => selected.has(cell.x + "," + cell.y)) });
+    if (!appearance) { showErrors("无法使用这个形状", ["请检查所选格子的坐标。"]); return; }
+    const updated = { ...current, name: dom.chipShapeName.value.trim().slice(0, 24) || current.name || "未命名芯片", appearance,
+      ...(current.circuits ? { circuits: current.circuits.filter((cell) => cell.placement.length || selected.has(cell.x + "," + cell.y)) } : {}) };
+    const chips = (store.data.chips || []).some((chip) => chip.id === updated.id)
+      ? store.data.chips.map((chip) => chip.id === updated.id ? updated : chip) : [...(store.data.chips || []), updated];
+    for (const chip of chips) {
+      const error = core.chipLayoutError(chip, chips);
+      if (error) { showErrors("不能移除已有线路的格子", ["芯片「" + chip.name + "」：" + error + "。请先清空该格内部线路。"]); return; }
+    }
+    const boards = [...Object.values(store.data.freeBoards || {}), ...chips.flatMap((chip) =>
+      [chip.placement, ...(chip.circuits || []).map((cell) => cell.placement)])];
+    if (boards.some((board) => core.placementCollisions(board, chips))) {
+      showErrors("形状发生重叠", ["新形状会碰到现有元件，请先移动相邻元件。"]); return;
+    }
+    store.replace({ ...store.data, chips }); store.persist();
+    restoreShapeWorkspace();
+    if (state.chipDraft) {
+      if (state.cellDraft) { const outer = state.cellDraft.outer; state.cellDraft = null; Object.assign(state, outer); }
+      if (state.chipDraft.id === updated.id) Object.assign(state.chipDraft, { name: updated.name, appearance,
+        circuits: globalThis.structuredClone(core.chipCircuits(updated)), basePlacement: clonePlacement(updated.placement) });
+      closeChipEditor();
+    }
+    openChipEditor(updated);
+  }
+
+  function showCellAppearance() {
+    if (!state.chipDraft?.appearance || !state.cellDraft) return;
+    rememberBoard();
+    const chip = (store.data.chips || []).find((entry) => entry.id === state.chipDraft.id);
+    const { x, y } = state.cellDraft;
+    const previous = chip.appearance.cells.find((cell) => cell.x === x && cell.y === y);
+    dom.sheetTitle.textContent = "本格外观 (" + x + "," + y + ")";
+    dom.sheetBody.innerHTML = ""; dom.sheetActions.innerHTML = "";
+    const controls = document.createElement("div"); controls.className = "appearance-controls"; dom.sheetBody.appendChild(controls);
+    function input(label, type) {
+      const wrapper = document.createElement("label"); wrapper.textContent = label + " ";
+      const field = document.createElement("input"); field.type = type; field.setAttribute("aria-label", label);
+      wrapper.appendChild(field); controls.appendChild(wrapper); return field;
+    }
+    const color = input("格子颜色", "color"); color.value = previous?.color || "#20373c";
+    const text = input("格子文字", "text"); text.value = previous?.text || ""; text.maxLength = 12;
+    const arrow = input("绿色朝上箭头", "checkbox"); arrow.checked = Boolean(previous?.arrow);
+    function apply(clear) {
+      let cells = chip.appearance.cells.filter((cell) => cell.x !== x || cell.y !== y);
+      if (!clear) {
+        if (arrow.checked) cells = cells.map((cell) => ({ ...cell, arrow: false }));
+        cells.push({ x, y, color: color.value, text: text.value, arrow: arrow.checked });
+      }
+      const appearance = core.normalizeChipAppearance({ ...chip.appearance, cells });
+      store.replace({ ...store.data, chips: store.data.chips.map((entry) => entry.id === chip.id ? { ...entry, appearance } : entry) });
+      store.persist(); state.chipDraft.appearance = appearance;
+      hideOverlay(); refresh(true); rememberBoard();
+    }
+    addAction("应用本格外观", () => apply(false), true);
+    addAction("清除本格样式", () => apply(true));
+    addAction("取消", hideOverlay); showOverlay();
+  }
+
+  function showChipLibrary() {
+    if (state.mode !== "free" || state.inspection) return;
+    const nesting = Boolean(state.chipDraft);
+    dom.sheetTitle.textContent = nesting ? "选择内部芯片" : "芯片库";
+    dom.sheetBody.innerHTML = "";
+    dom.sheetActions.innerHTML = "";
+    const help = document.createElement("p");
+    help.textContent = nesting ? "选择已有芯片放到当前芯片内。不能包含自身或形成循环嵌套。" :
+      "创建后先进入独立无限网格画形状，再点进各格设计内部。旧芯片仍可编辑、放置和嵌套。";
+    dom.sheetBody.appendChild(help);
+    for (const chip of store.data.chips || []) {
+      const row = document.createElement("div");
+      row.className = "chip-library-row";
+      const cyclic = nesting && core.chipDependsOn(store.data.chips || [], chip.id, state.chipDraft.id);
+      const actions = [["放置 " + chip.name, () => {
+        state.selectedChipId = chip.id;
+        state.selectedType = "chip";
+        hideOverlay(); updateToolbar();
+      }]];
+      if (!nesting) actions.push(["编辑 " + chip.name, () => openChipEditor(chip)],
+        ["形状 " + chip.name, () => openShapeGrid(chip)],
+        ["删除 " + chip.name, () => showDeleteChip(chip)]);
+      for (const [label, action] of actions) {
+        const button = document.createElement("button");
+        button.className = "btn"; button.type = "button"; button.textContent = label;
+        if (label.startsWith("删除 ")) button.classList.add("btn--danger");
+        if (cyclic) { button.disabled = true; button.title = "会形成循环嵌套，无法放置"; }
+        button.addEventListener("click", action); row.appendChild(button);
+      }
+      dom.sheetBody.appendChild(row);
+    }
+    if (chipDeleteUndo) {
+      addAction("撤销删除芯片", () => {
+        const previous = chipDeleteUndo;
+        chipDeleteUndo = null;
+        store.replace(previous.save); store.persist();
+        Object.assign(state, previous.state);
+        state.stars = store.data.stars;
+        refresh(true);
+        showChipLibrary();
+      });
+    }
+    if (!nesting) addAction("新建芯片", () => {
+      const chips = store.data.chips || [];
+      if (chips.length >= 64) { showErrors("芯片库已满", ["最多保存 64 个芯片。"]); return; }
+      const chip = { id: "chip-" + Date.now() + "-" + chips.length,
+        name: "芯片 " + (chips.length + 1), placement: [] };
+      openShapeGrid(chip, true);
+    }, true);
+    addAction("关闭", hideOverlay);
+    showOverlay();
+  }
+
+  function showDeleteChip(chip) {
+    rememberBoard();
+    const preview = storage.removeChip(store.data, chip.id);
+    dom.sheetTitle.textContent = "删除芯片「" + chip.name + "」？";
+    dom.sheetBody.textContent = "将删除芯片定义，并移除各实验板上的 " + preview.removedInstances +
+      " 个实例、工作台中的 " + preview.removedSnapshotInstances +
+      " 个实例、其他芯片内的 " + preview.removedNestedInstances +
+      " 个实例。其他元件保留。删除后可在关闭芯片库前点击「撤销删除芯片」恢复。";
+    dom.sheetActions.innerHTML = "";
+    const confirm = addAction("确认删除芯片", () => {
+      chipDeleteUndo = { save: storage.parseSave(storage.serializeSave(store.data)), state: {
+        placement: clonePlacement(state.placement), history: state.history.map(clonePlacement),
+        historyIndex: state.historyIndex, selectedChipId: state.selectedChipId, selectedType: state.selectedType,
+      } };
+      const result = storage.removeChip(store.data, chip.id);
+      store.replace(result.save); store.persist();
+      const keep = (item) => !(item.type === "chip" && item.chipId === chip.id);
+      state.placement = state.placement.filter(keep);
+      state.history = state.history.map((board) => board.filter(keep));
+      if (state.selectedChipId === chip.id) {
+        state.selectedChipId = null;
+        if (state.selectedType === "chip") state.selectedType = null;
+      }
+      refresh(true);
+      showChipLibrary();
+    });
+    confirm.classList.add("btn--danger");
+    addAction("取消", showChipLibrary, true);
+    showOverlay();
+  }
+
+  function openChipEditor(chip) {
+    rememberBoard();
+    simulation.reset(); state.lastStep = performance.now();
+    state.parentWorkspace = { placement: clonePlacement(state.placement), freeLevel: state.freeLevel,
+      camera: { ...state.camera }, history: state.history, historyIndex: state.historyIndex };
+    state.cellDraft = null;
+    state.chipDraft = { id: chip.id, name: chip.name,
+      ...(chip.appearance ? { appearance: globalThis.structuredClone(chip.appearance),
+        circuits: globalThis.structuredClone(core.chipCircuits(chip)), basePlacement: clonePlacement(chip.placement) } : {}) };
+    state.freeLevel = { ...state.freeLevel, insideChip: true, chipShape: undefined,
+      hint: chip.appearance ? "点击外层网格中的一格，编辑它独立的内部网格。相邻格按原芯片规则上下左右连接。" :
+        "每个 IO 按原规则接收、输出上下左右信号。左键旋转，R 重置运行过程。",
+      inventory: { ...state.freeLevel.inventory, inputPort: levels.MAX_UNITS, outputPort: levels.MAX_UNITS } };
+    state.placement = chip.appearance ? [] : clonePlacement(chip.placement);
+    const anchor = core.appearanceAnchor(chip.appearance);
+    state.camera = chip.appearance ? { x: anchor.x + 1, y: anchor.y + 1, cell: 36 } : { x: 4, y: 3, cell: 36 };
+    dom.chipEditor.hidden = false; dom.chipName.value = chip.name;
+    resetBoardView(); rememberBoard();
+  }
+
+  function openChipCell(x, y) {
+    if (!state.chipDraft?.appearance || state.cellDraft) return;
+    rememberBoard();
+    const outer = { placement: state.placement, freeLevel: state.freeLevel, camera: { ...state.camera },
+      history: state.history, historyIndex: state.historyIndex, selectedType: state.selectedType, cursor: state.cursor, hover: state.hover };
+    state.cellDraft = { x, y, outer };
+    state.freeLevel = { ...state.freeLevel, chipShape: undefined,
+      hint: "正在编辑格子 (" + x + "," + y + ") 的独立内部网格，仍使用原芯片的四向 IO 规则。" };
+    state.placement = clonePlacement(state.chipDraft.circuits.find((cell) => cell.x === x && cell.y === y)?.placement || []);
+    state.camera = { x: 4, y: 3, cell: 36 };
+    simulation.reset(); state.lastStep = performance.now(); resetBoardView(); rememberBoard();
+  }
+
+  function closeChipCell() {
+    if (!state.cellDraft) return;
+    rememberBoard();
+    const outer = state.cellDraft.outer;
+    state.cellDraft = null;
+    Object.assign(state, outer);
+    simulation.reset(); state.lastStep = performance.now();
+    buildToolbar(currentLevel()); refresh(true);
+  }
+
+  function closeChipEditor() {
+    if (!state.chipDraft) return;
+    if (state.cellDraft) closeChipCell();
+    rememberBoard();
+    simulation.reset(); state.lastStep = performance.now();
+    Object.assign(state, state.parentWorkspace);
+    state.parentWorkspace = null; state.chipDraft = null; state.cellDraft = null;
+    state.selectedType = null; state.cursor = null; state.hover = null;
+    dom.chipEditor.hidden = true;
+    buildToolbar(currentLevel()); refresh(true); rememberBoard();
+  }
+
+  function inspectChip(cell) {
+    if (state.mode !== "free") return;
+    const chip = [...(store.data.chips || []), ...(state.inspection?.virtualDefinitions || [])].find((entry) => entry.id === cell.chipId);
+    if (!chip) return;
+    const parent = state.inspection;
+    const root = parent ? parent.root : { level: currentLevel(), placement: clonePlacement(state.placement), camera: { ...state.camera },
+      history: state.history, historyIndex: state.historyIndex, selectedType: state.selectedType,
+      cursor: state.cursor, hover: state.hover, chipDraft: state.chipDraft };
+    const trail = parent ? [...parent.trail, { ...parent, root: undefined, trail: undefined,
+      level: state.freeLevel, placement: state.placement, camera: { ...state.camera } }] : [];
+    const parentPath = parent ? parent.path : "root";
+    state.inspection = { path: simulation.childPath(parentPath, cell), parentPath, name: chip.name,
+      cell: { x: cell.x, y: cell.y }, root, trail,
+      virtualDefinitions: chip.appearance ? core.chipComposite(chip).definitions : [] };
+    state.chipDraft = null;
+    dom.chipEditor.hidden = true;
+    state.freeLevel = { ...root.level, insideChip: true,
+      chipShape: undefined,
+      hint: "这里显示被点击芯片实例的当前过程。空格暂停／继续，拖动平移；点「返回实验板」退出。" };
+    state.placement = chip.appearance ? core.chipComposite(chip).placement : clonePlacement(chip.placement);
+    state.camera = { x: 4, y: 3, cell: 36 };
+    state.selectedType = PAN; state.cursor = null; state.hover = null;
+    dom.chipInspectionName.textContent = "芯片 · " + chip.name;
+    dom.btnInspectionBack.textContent = parent ? "返回上层芯片" : root.chipDraft ? "返回芯片编辑" : "返回实验板";
+    dom.chipInspection.hidden = false;
+    disarmClear(); buildToolbar(currentLevel()); refresh(true);
+  }
+
+  function closeInspection() {
+    if (!state.inspection) return;
+    const root = state.inspection.root;
+    if (state.inspection.trail.length) {
+      const trail = [...state.inspection.trail];
+      const parent = trail.pop();
+      state.inspection = { ...parent, root, trail };
+      state.freeLevel = parent.level; state.placement = parent.placement; state.camera = parent.camera;
+      dom.chipInspectionName.textContent = "芯片 · " + parent.name;
+      dom.btnInspectionBack.textContent = trail.length ? "返回上层芯片" : root.chipDraft ? "返回芯片编辑" : "返回实验板";
+      refresh(true);
+      return;
+    }
+    state.inspection = null;
+    state.freeLevel = root.level;
+    state.chipDraft = root.chipDraft;
+    dom.chipEditor.hidden = !state.chipDraft;
+    for (const name of ["placement", "camera", "history", "historyIndex", "selectedType", "cursor", "hover"]) state[name] = root[name];
+    dom.chipInspection.hidden = true;
+    buildToolbar(currentLevel()); refresh(true);
+  }
+
+  function copyFromLevel() {
+    dom.sheetTitle.textContent = "从关卡复制";
+    dom.sheetBody.textContent = "用当前关卡的布局替换自由布局？可以用「撤销」恢复。";
+    dom.sheetActions.innerHTML = "";
+    addAction("复制布局", () => {
+      state.placement = seedFreeBoard(levels.getLevel(state.levelId), storage.getBoard(store.data, state.levelId));
+      hideOverlay();
+      commit();
+    }, true);
+    addAction("取消", hideOverlay);
+    showOverlay();
+  }
+
+  function applyToLevel() {
+    const source = levels.getLevel(state.levelId);
+    if (!source || state.mode !== "free") return;
+    const placement = clonePlacement(state.placement.filter((item) => core.PLACEABLE_TYPES.includes(item.type)));
+    const check = levels.validatePlacement(source, placement);
+    if (!check.ok) {
+      showErrors("暂不能应用到关卡", ["自由布局已保留，请调整以下元件后重试；也可以关闭提示后点「关卡模式」。", ...check.errors]);
+      return;
+    }
+    selectLevel(source.id);
+    state.placement = placement;
+    commit();
+  }
+
+  function resetBoardView() {
     state.selectedType = null;
     state.cursor = null;
     state.hover = null;
     state.wasAllLit = false;
-
-    buildToolbar(level);
+    hideOverlay();
+    buildToolbar(currentLevel());
     disarmClear();
     resetHistory();
-
-    // 进入关卡时静默判定一次：教学第 1 关不放元件就已通关，不该立刻弹结算
     refresh(true);
+  }
+
+  function selectLevel(id) {
+    const level = levels.getLevel(id);
+    if (!level) return;
+
+    rememberBoard();
+    simulation.reset(); state.lastStep = performance.now();
+    state.mode = "level";
+    state.silentInitialization = true;
+    state.freeLevel = null;
+    state.camera = null;
+    state.levelId = id;
+    // 回到某关时接着上次的布局继续 —— 自动存档的意义就在这儿
+    state.placement = clonePlacement(storage.getBoard(store.data, id));
+    // 进入关卡时静默判定一次：教学第 1 关不放元件就已通关，不该立刻弹结算
+    resetBoardView();
+    rememberSession();
   }
 
   // ---------- 输入 ----------
@@ -852,10 +1573,59 @@
     return renderer.pointToCell(state.layout, point.x, point.y);
   }
 
+  let pointerGesture = null;
+  let viewSaveTimer = 0;
+
+  function changeCamera(persist) {
+    refresh(true);
+    if (persist) rememberBoard();
+  }
+
+  function zoomCamera(factor, point) {
+    if (state.mode !== "free" || !state.camera) return;
+    const camera = state.camera;
+    const px = point ? point.x - canvas.width / 2 : 0;
+    const py = point ? point.y - canvas.height / 2 : 0;
+    const worldX = camera.x + px / (camera.cell * state.dpr);
+    const worldY = camera.y + py / (camera.cell * state.dpr);
+    camera.cell = Math.max(12, Math.min(100, camera.cell * factor));
+    camera.x = worldX - px / (camera.cell * state.dpr);
+    camera.y = worldY - py / (camera.cell * state.dpr);
+    changeCamera(false);
+    clearTimeout(viewSaveTimer);
+    viewSaveTimer = setTimeout(rememberBoard, 180);
+  }
+
+  canvas.addEventListener("wheel", (event) => {
+    if (state.mode !== "free") return;
+    event.preventDefault();
+    zoomCamera(Math.exp(-event.deltaY * 0.0015), toCanvasPoint(event));
+  }, { passive: false });
+
   canvas.addEventListener("pointerdown", (event) => {
+    if (event.ctrlKey) {
+      event.preventDefault();
+      if (event.button === 0) rotateAll();
+      else if (event.button === 2) deleteAll();
+      return;
+    }
     const cell = cellFromEvent(event);
     if (!cell) return;
     event.preventDefault();
+    if (event.button === 1) {
+      const item = findPlacement(cell.x, cell.y);
+      if (item && item.type === "chip") inspectChip(item);
+      return;
+    }
+
+    if (state.mode === "free" && event.button !== 2) {
+      if (pointerGesture) return;
+      pointerGesture = { id: event.pointerId, x: event.clientX, y: event.clientY,
+        camera: { ...state.camera }, cell,
+        moved: state.selectedType === PAN };
+      canvas.setPointerCapture(event.pointerId);
+      return;
+    }
 
     if (event.button === 2) {
       removeAt(cell.x, cell.y);
@@ -869,6 +1639,19 @@
   });
 
   canvas.addEventListener("pointermove", (event) => {
+    if (pointerGesture && pointerGesture.id === event.pointerId) {
+      const dx = event.clientX - pointerGesture.x;
+      const dy = event.clientY - pointerGesture.y;
+      if (Math.hypot(dx, dy) > 5) pointerGesture.moved = true;
+      if (pointerGesture.moved) {
+        state.camera.x = pointerGesture.camera.x - dx / state.camera.cell;
+        state.camera.y = pointerGesture.camera.y - dy / state.camera.cell;
+        state.hover = null;
+        canvas.style.cursor = "grabbing";
+        changeCamera(false);
+      }
+      return;
+    }
     if (event.pointerType === "touch") return;
     const cell = cellFromEvent(event);
     const changed =
@@ -878,13 +1661,32 @@
 
     if (changed) {
       state.hover = cell;
+      updateHud();
       markDirty();
     }
   });
 
+  function finishPointer(event) {
+    if (!pointerGesture || pointerGesture.id !== event.pointerId) return;
+    const gesture = pointerGesture;
+    pointerGesture = null;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    if (event.type !== "pointercancel" && !gesture.moved) {
+      state.cursor = gesture.cell;
+      handleCell(gesture.cell.x, gesture.cell.y);
+      markDirty();
+    }
+    if (gesture.moved) rememberBoard();
+    updateHud();
+  }
+  canvas.addEventListener("pointerup", finishPointer);
+  canvas.addEventListener("pointercancel", finishPointer);
+  canvas.addEventListener("lostpointercapture", finishPointer);
+
   canvas.addEventListener("pointerleave", () => {
     if (state.hover) {
       state.hover = null;
+      updateHud();
       markDirty();
     }
   });
@@ -896,16 +1698,26 @@
     if (!level) return;
 
     const start = state.cursor || { x: 0, y: 0 };
-    const x = Math.max(0, Math.min(level.cols - 1, start.x + dx));
-    const y = Math.max(0, Math.min(level.rows - 1, start.y + dy));
+    const x = state.mode === "free" ? start.x + dx : Math.max(0, Math.min(level.cols - 1, start.x + dx));
+    const y = state.mode === "free" ? start.y + dy : Math.max(0, Math.min(level.rows - 1, start.y + dy));
     state.cursor = { x, y };
+    if (state.mode === "free") {
+      const halfW = canvas.width / state.dpr / state.camera.cell / 2;
+      const halfH = canvas.height / state.dpr / state.camera.cell / 2;
+      if (Math.abs(x + 0.5 - state.camera.x) > halfW - 1 || Math.abs(y + 0.5 - state.camera.y) > halfH - 1) {
+        state.camera.x = x + 0.5;
+        state.camera.y = y + 0.5;
+        changeCamera(true);
+      }
+    }
     markDirty();
   }
 
   function selectByIndex(index) {
+    if (state.inspection) return;
     const level = currentLevel();
     if (!level) return;
-    const available = core.PLACEABLE_TYPES.filter((type) => (level.inventory[type] || 0) > 0);
+    const available = availableTypes(level);
     const type = available[index];
     if (!type) return;
     state.selectedType = state.selectedType === type ? null : type;
@@ -913,12 +1725,15 @@
   }
 
   document.addEventListener("keydown", (event) => {
+    if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
     const level = currentLevel();
     if (!level) return;
 
     if (event.key === "Escape") {
       event.preventDefault();
       if (!dom.overlay.hidden) hideOverlay();
+      else if (state.shapeDraft) restoreShapeWorkspace();
+      else if (state.inspection) closeInspection();
       else if (state.selectedType) {
         state.selectedType = null;
         updateToolbar();
@@ -927,6 +1742,11 @@
     }
 
     if (!dom.overlay.hidden) return;
+    if (event.code === "Space" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      if (!event.repeat) togglePause();
+      return;
+    }
 
     // 撤销 / 重做必须先于「带修饰键一律忽略」那一层，否则会被整个拦掉
     if (event.ctrlKey || event.metaKey) {
@@ -949,6 +1769,11 @@
     const cursor = state.cursor;
 
     switch (event.key) {
+      case "n":
+      case "N":
+        event.preventDefault();
+        if (!event.repeat) stepOnce();
+        return;
       case "ArrowUp":
         event.preventDefault();
         moveCursor(0, -1);
@@ -966,7 +1791,6 @@
         moveCursor(1, 0);
         return;
       case "Enter":
-      case " ":
         if (cursor) {
           event.preventDefault();
           handleCell(cursor.x, cursor.y);
@@ -974,10 +1798,13 @@
         return;
       case "r":
       case "R":
-        if (cursor) {
-          event.preventDefault();
-          rotateAt(cursor.x, cursor.y);
-        }
+        event.preventDefault();
+        if (!event.repeat) resetSimulation();
+        return;
+      case "c":
+      case "C":
+        event.preventDefault();
+        cyclePrismColors();
         return;
       case "Delete":
       case "Backspace":
@@ -997,7 +1824,7 @@
     }
 
     const digit = Number.parseInt(event.key, 10);
-    if (Number.isInteger(digit) && digit >= 1 && digit <= 5) {
+    if (Number.isInteger(digit) && digit >= 1 && digit <= 6) {
       event.preventDefault();
       selectByIndex(digit - 1);
     }
@@ -1006,7 +1833,51 @@
   // ---------- 装配 ----------
 
   dom.btnLevels.addEventListener("click", showLevelList);
+  dom.btnMode.addEventListener("click", () => {
+    enterFreeMode();
+  });
+  dom.btnChallenge.addEventListener("click", () => {
+    if (state.mode === "free") selectLevel(state.levelId);
+  });
+  dom.btnCopyLevel.addEventListener("click", copyFromLevel);
+  dom.btnApplyLevel.addEventListener("click", applyToLevel);
+  dom.btnChips.addEventListener("click", showChipLibrary);
+  dom.btnChipDone.addEventListener("click", () => state.cellDraft ? closeChipCell() : closeChipEditor());
+  dom.btnRun.addEventListener("click", togglePause);
+  dom.btnStep.addEventListener("click", stepOnce);
+  dom.btnReset.addEventListener("click", resetSimulation);
+  dom.btnAppearance.addEventListener("click", () => {
+    if (!state.chipDraft) return;
+    rememberBoard();
+    openShapeGrid((store.data.chips || []).find((chip) => chip.id === state.chipDraft.id));
+  });
+  dom.btnCellAppearance.addEventListener("click", showCellAppearance);
+  dom.btnShapeNext.addEventListener("click", finishShapeGrid);
+  dom.btnShapeCancel.addEventListener("click", restoreShapeWorkspace);
+  dom.btnShapeClear.addEventListener("click", () => {
+    if (!state.shapeDraft || !state.placement.length) return;
+    state.placement = []; commit();
+  });
+  dom.stepSeconds.addEventListener("change", changeStepDuration);
+  dom.btnInspectionBack.addEventListener("click", closeInspection);
+  dom.chipName.addEventListener("input", () => {
+    if (!state.chipDraft) return;
+    state.chipDraft.name = dom.chipName.value.trim().slice(0, 24) || "未命名芯片";
+    rememberBoard(); updateHud();
+  });
+  dom.btnPan.addEventListener("click", () => {
+    state.selectedType = state.selectedType === PAN ? null : PAN;
+    updateToolbar();
+  });
+  dom.btnZoomIn.addEventListener("click", () => zoomCamera(1.25));
+  dom.btnZoomOut.addEventListener("click", () => zoomCamera(0.8));
+  dom.btnHome.addEventListener("click", () => {
+    state.camera = state.shapeDraft ? { x: 0, y: 0, cell: 36 } : state.chipDraft || state.inspection
+      ? { x: 4, y: 3, cell: 36 } : homeCamera(levels.getLevel(state.levelId));
+    changeCamera(true);
+  });
   dom.btnClear.addEventListener("click", requestClear);
+  dom.btnPrismColors.addEventListener("click", cyclePrismColors);
   dom.btnUndo.addEventListener("click", undo);
   dom.btnRedo.addEventListener("click", redo);
   dom.btnSnapshots.addEventListener("click", showSnapshotSheet);
@@ -1042,14 +1913,19 @@
 
   // 先读档再进关卡：selectLevel 会把该关上次的布局恢复出来
   store.load();
+  state.stepMs = store.data.stepMs || simulationApi.STEP_MS;
+  dom.stepSeconds.value = String(state.stepMs / 1000);
   state.stars = store.data.stars;
 
   resize();
-  selectLevel(levels.LEVELS[0].id);
+  const session = store.data.session;
+  selectLevel(session && levels.getLevel(session.levelId) ? session.levelId : levels.LEVELS[0].id);
+  if (session && session.mode === "free") enterFreeMode();
   start();
 
   globalThis.__lightGame = {
     state,
+    simulation,
     start,
     stop,
     resize,

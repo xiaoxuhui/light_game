@@ -17,38 +17,38 @@ const REFERENCE_SOLUTIONS = {
   t01: [],
   t02: [{ type: "mirror", x: 6, y: 4, orient: SLASH }],
   t03: [{ type: "splitter", x: 3, y: 3, orient: BACKSLASH }],
-  t04: [{ type: "prism", x: 3, y: 3, orient: 0 }],
+  t04: [{ type: "prism", x: 3, y: 3, orient: 0, facing: 0 }],
 
   // 第 1 章 · 颜色（本章不发分光镜：要分束就只能靠棱镜）
   c01: [
-    { type: "prism", x: 2, y: 2, orient: 0 },
+    { type: "prism", x: 2, y: 2, orient: 0, facing: 0 },
     { type: "mirror", x: 2, y: 3, orient: BACKSLASH },
-    { type: "prism", x: 7, y: 3, orient: 2 },
+    { type: "prism", x: 7, y: 3, orient: 2, facing: 0 },
   ],
   c02: [
     { type: "mirror", x: 6, y: 4, orient: SLASH },
     { type: "mirror", x: 2, y: 2, orient: BACKSLASH },
   ],
   c03: [
-    { type: "prism", x: 4, y: 2, orient: 1 },
+    { type: "prism", x: 4, y: 2, orient: 1, facing: 0 },
     { type: "mirror", x: 4, y: 3, orient: SLASH },
     { type: "mirror", x: 2, y: 3, orient: BACKSLASH },
   ],
   c04: [
     { type: "mirror", x: 1, y: 1, orient: BACKSLASH },
-    { type: "prism", x: 1, y: 3, orient: 1 },
+    { type: "prism", x: 1, y: 3, orient: 1, facing: 1 },
     { type: "mirror", x: 4, y: 3, orient: BACKSLASH },
     { type: "mirror", x: 1, y: 5, orient: BACKSLASH },
   ],
   c05: [
     { type: "mirror", x: 2, y: 5, orient: SLASH },
-    { type: "prism", x: 2, y: 2, orient: 2 },
+    { type: "prism", x: 2, y: 2, orient: 2, facing: 3 },
     { type: "mirror", x: 0, y: 2, orient: BACKSLASH },
     { type: "mirror", x: 0, y: 0, orient: SLASH },
   ],
   c06: [
     { type: "mirror", x: 4, y: 5, orient: SLASH },
-    { type: "prism", x: 4, y: 3, orient: 1 },
+    { type: "prism", x: 4, y: 3, orient: 1, facing: 3 },
     { type: "mirror", x: 0, y: 3, orient: BACKSLASH },
     { type: "mirror", x: 0, y: 0, orient: SLASH },
   ],

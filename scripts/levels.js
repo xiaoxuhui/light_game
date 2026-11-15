@@ -376,6 +376,13 @@
     const isCount = (value) => isInt(value) && value >= 0 && value <= MAX_UNITS;
 
     if (data.schema !== SCHEMA) errors.push("schema 必须是 " + SCHEMA);
+    if (data.mode !== undefined && data.mode !== "free") errors.push("mode 必须是 free 或省略");
+    if (data.infinite !== undefined && (data.infinite !== true || data.mode !== "free")) {
+      errors.push("infinite 仅用于自由模式，且必须为 true");
+    }
+    if (data.mode === "free" && (typeof data.sourceLevelId !== "string" || !data.sourceLevelId)) {
+      errors.push("自由模式文件必须提供 sourceLevelId");
+    }
     if (!isInt(data.version) || data.version < 1 || data.version > SCHEMA_VERSION) {
       errors.push("version 必须是 1–" + SCHEMA_VERSION + " 的整数");
     }
@@ -397,7 +404,9 @@
     if (!data.inventory || typeof data.inventory !== "object" || Array.isArray(data.inventory)) {
       errors.push("inventory 必须是对象");
     } else {
-      for (const type of core.PLACEABLE_TYPES) {
+      for (const type of data.mode === "free" ? core.FREE_PLACEABLE_TYPES : core.PLACEABLE_TYPES) {
+        if (["coldMirror", "hotMirror", "directionalEmitter", "chip"].includes(type) && data.inventory[type] === undefined) continue;
+        if (type === "bulb" && !data.infinite && data.inventory.bulb === undefined) continue;
         if (!isCount(data.inventory[type])) {
           errors.push("inventory." + type + " 必须是 0–" + MAX_UNITS + " 的整数");
         }
@@ -434,7 +443,9 @@
         unitCount += 1;
 
         if (item.type === core.TILE.EMITTER) {
-          if (core.toDirectionIndex(item.dir) === -1) errors.push(where + ".dir 非法");
+          if (core.toDirectionIndex(item.dir) === -1 && !(data.mode === "free" && item.dir === "all")) {
+            errors.push(where + ".dir 非法");
+          }
           if (!isColor(item.color)) errors.push(where + ".color 必须是 1–7 的整数");
         }
       });
@@ -498,15 +509,21 @@
         errors.push(where + " 必须是对象");
         return;
       }
-      if (core.PLACEABLE_TYPES.indexOf(item.type) === -1) {
+      const allowed = level.mode === "free" ? core.FREE_PLACEABLE_TYPES : core.PLACEABLE_TYPES;
+      if (allowed.indexOf(item.type) === -1) {
         errors.push(where + ".type 不在可放置元件白名单内");
         return;
       }
-      if (!isInt(item.x) || !isInt(item.y)) {
+      if (item.type === "chip" && (typeof item.chipId !== "string" || !item.chipId)) errors.push(where + " 缺少 chipId");
+      if (item.facing !== undefined && (item.type !== "prism" || !isInt(item.facing) || item.facing < 0 || item.facing > 3)) {
+        errors.push(where + ".facing 必须是棱镜的 0–3 输入朝向");
+      }
+      if (!Number.isSafeInteger(item.x) || !Number.isSafeInteger(item.y)) {
         errors.push(where + " 坐标必须是整数");
         return;
       }
-      if (item.x < 0 || item.y < 0 || item.x >= level.cols || item.y >= level.rows) {
+      if (!(level.mode === "free" && level.infinite) &&
+          (item.x < 0 || item.y < 0 || item.x >= level.cols || item.y >= level.rows)) {
         errors.push(where + " 坐标越界");
         return;
       }

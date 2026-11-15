@@ -80,7 +80,8 @@
   function pointToCell(layout, px, py) {
     const x = Math.floor((px - layout.ox) / layout.cell);
     const y = Math.floor((py - layout.oy) / layout.cell);
-    if (x < 0 || y < 0 || x >= layout.cols || y >= layout.rows) return null;
+    if (!layout.infinite && (x < 0 || y < 0 || x >= layout.cols || y >= layout.rows)) return null;
+    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) return null;
     return { x, y };
   }
 
@@ -109,6 +110,21 @@
   // ---------- 各层绘制 ----------
 
   function drawBoard(ctx, layout) {
+    if (layout.infinite) {
+      ctx.fillStyle = BOARD_FILL;
+      ctx.fillRect(0, 0, layout.width, layout.height);
+      ctx.strokeStyle = GRID_LINE;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = layout.ox % layout.cell; x < layout.width; x += layout.cell) {
+        ctx.moveTo(x, 0); ctx.lineTo(x, layout.height);
+      }
+      for (let y = layout.oy % layout.cell; y < layout.height; y += layout.cell) {
+        ctx.moveTo(0, y); ctx.lineTo(layout.width, y);
+      }
+      ctx.stroke();
+      return;
+    }
     ctx.fillStyle = BOARD_FILL;
     ctx.fillRect(layout.ox, layout.oy, layout.boardW, layout.boardH);
 
@@ -156,6 +172,25 @@
     const center = cellCenter(layout, target.x, target.y);
     const half = layout.cell * 0.33;
     const color = beamColor(target.require);
+
+    if (target.bulb) {
+      if (target.lit) {
+        const glow = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, layout.cell * 0.6);
+        glow.addColorStop(0, withAlpha(color, 0.45));
+        glow.addColorStop(1, withAlpha(color, 0));
+        ctx.fillStyle = glow;
+        ctx.fillRect(center.x - layout.cell, center.y - layout.cell, layout.cell * 2, layout.cell * 2);
+      }
+      ctx.beginPath();
+      ctx.arc(center.x, center.y - layout.cell * 0.06, layout.cell * 0.25, 0, Math.PI * 2);
+      ctx.fillStyle = target.lit ? withAlpha(color, 0.65) : "#202632";
+      ctx.strokeStyle = target.lit ? color : "#8b93a1";
+      ctx.lineWidth = Math.max(1.5, layout.cell * 0.045);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = target.lit ? color : "#8b93a1";
+      ctx.fillRect(center.x - layout.cell * 0.12, center.y + layout.cell * 0.19, layout.cell * 0.24, layout.cell * 0.12);
+      return;
+    }
 
     ctx.fillStyle = target.lit ? withAlpha(color, 0.2) : "rgba(255, 255, 255, 0.035)";
     ctx.strokeStyle = target.lit ? color : withAlpha(color, 0.42);
@@ -228,6 +263,8 @@
   }
 
   function drawEmitter(ctx, layout, x, y, cellData) {
+    ctx.save();
+    if (cellData.powered === false) ctx.globalAlpha = 0.25;
     const center = cellCenter(layout, x, y);
     const color = beamColor(cellData.color);
     const radius = layout.cell * 0.5;
@@ -246,8 +283,10 @@
     ctx.fill();
 
     // 朝向指示：从中心朝发光方向画一小段
-    const direction = core.DIRECTIONS[cellData.dir];
-    if (direction) {
+    const directions = cellData.omni ? [0, 2, 4, 6] : [cellData.dir];
+    for (const dir of directions) {
+      const direction = core.DIRECTIONS[dir];
+      if (!direction) continue;
       ctx.strokeStyle = color;
       ctx.lineWidth = Math.max(2, layout.cell * 0.07);
       ctx.beginPath();
@@ -257,7 +296,9 @@
         center.y + direction.dy * layout.cell * 0.38,
       );
       ctx.stroke();
+      if (!cellData.omni) drawArrow(ctx, layout, center, cellData.dir, color);
     }
+    ctx.restore();
   }
 
   function drawMirror(ctx, layout, center, orient) {
@@ -285,20 +326,36 @@
    * 又不会让人误以为那束光真的存在（黄光里没有蓝，蓝点就该是暗的）。
    * @param {{dir:number, color:number}|null} incoming 进入本格的光（方向索引 + 颜色掩码）
    */
-  function drawPrism(ctx, layout, center, orient, incoming) {
+  function drawPrism(ctx, layout, center, orient, incoming, facing) {
     const half = layout.cell * 0.22;
+    const entry = facing === undefined
+      ? incoming && incoming.dir >= 0 ? incoming.dir : core.DIRECTION_INDEX_BY_NAME.right
+      : (2 + core.normalizeOrient("directionalEmitter", facing) * 2) % 8;
 
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate((entry - 2) * Math.PI / 4);
     ctx.beginPath();
-    ctx.moveTo(center.x, center.y - half);
-    ctx.lineTo(center.x + half * 0.9, center.y + half * 0.7);
-    ctx.lineTo(center.x - half * 0.9, center.y + half * 0.7);
+    ctx.moveTo(-half, -half);
+    ctx.lineTo(half, 0);
+    ctx.lineTo(-half, half);
     ctx.closePath();
+    ctx.fillStyle = "rgba(228,234,244,0.08)";
+    ctx.fill();
     ctx.strokeStyle = ELEMENT_LINE;
     ctx.lineWidth = Math.max(1.5, layout.cell * 0.06);
     ctx.stroke();
+    // 高亮输入面；整个三角形及输入箭头随四向旋转。
+    ctx.strokeStyle = "#ffd479";
+    ctx.beginPath(); ctx.moveTo(-half, -half); ctx.lineTo(-half, half); ctx.stroke();
+    ctx.restore();
 
-    const entry = incoming && incoming.dir >= 0 ? incoming.dir : core.DIRECTION_INDEX_BY_NAME.right;
-    const incomingColor = incoming ? incoming.color : null;
+    const input = core.DIRECTIONS[entry];
+    drawArrow(ctx, { cell: layout.cell * 0.45 }, {
+      x: center.x - input.dx * layout.cell * 0.32,
+      y: center.y - input.dy * layout.cell * 0.32,
+    }, entry, "#fff2cf");
+    const incomingColor = incoming ? incoming.dir === entry ? incoming.color : 0 : null;
     const slots = core.prismSlots(orient);
     const distance = layout.cell * 0.38;
     const radius = Math.max(1.5, layout.cell * 0.095);
@@ -343,6 +400,60 @@
     ctx.stroke();
   }
 
+  function drawArrow(ctx, layout, center, dir, color) {
+    const vector = core.DIRECTIONS[dir];
+    if (!vector) return;
+    const s = layout.cell * 0.3;
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(Math.atan2(vector.dy, vector.dx));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, layout.cell * 0.06);
+    ctx.beginPath(); ctx.moveTo(-s, 0); ctx.lineTo(s, 0);
+    ctx.moveTo(s * 0.4, -s * 0.5); ctx.lineTo(s, 0); ctx.lineTo(s * 0.4, s * 0.5);
+    ctx.stroke(); ctx.restore();
+  }
+
+  function drawChip(ctx, layout, center, cell, chips) {
+    const chip = (chips || []).find((item) => item.id === cell.chipId);
+    if (chip?.appearance) {
+      const appearance = chip.appearance, anchor = core.appearanceAnchor(appearance), heading = core.appearanceArrowCell(appearance);
+      ctx.save(); ctx.translate(center.x, center.y); ctx.rotate(cell.orient * Math.PI / 2);
+      for (const point of core.appearancePoints(appearance)) {
+        const cx = (point.x - anchor.x) * layout.cell, cy = (point.y - anchor.y) * layout.cell;
+        const style = appearance.cells.find((entry) => entry.x === point.x && entry.y === point.y);
+        const half = layout.cell * 0.47;
+        ctx.fillStyle = style?.color || "#20373c"; ctx.strokeStyle = "#6bddd2"; ctx.lineWidth = Math.max(1, layout.cell * 0.035);
+        roundRectPath(ctx, cx - half, cy - half, half * 2, half * 2, layout.cell * 0.05); ctx.fill(); ctx.stroke();
+        if (heading.x === point.x && heading.y === point.y) {
+          drawArrow(ctx, { cell: layout.cell * (style?.text ? 0.35 : 0.7) },
+            { x: cx, y: cy - (style?.text ? layout.cell * 0.25 : 0) }, 0, "#54e58b");
+        }
+        if (style?.text) {
+          ctx.fillStyle = "#d4fffa"; ctx.font = Math.max(8, layout.cell * 0.25) + "px sans-serif";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(style.text, cx, cy + (heading.x === point.x && heading.y === point.y ? layout.cell * 0.16 : 0), layout.cell * 0.85);
+        }
+      }
+      if (appearance.showName) {
+        ctx.fillStyle = "#d4fffa"; ctx.font = Math.max(7, layout.cell * 0.18) + "px sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(chip.name, 0, layout.cell * 0.32, layout.cell * 0.85);
+      }
+      ctx.restore(); return;
+    }
+    const s = layout.cell * 0.35;
+    ctx.save(); ctx.translate(center.x, center.y); ctx.rotate(cell.orient * Math.PI / 2);
+    ctx.fillStyle = "#20373c"; ctx.strokeStyle = "#6bddd2"; ctx.lineWidth = 2;
+    roundRectPath(ctx, -s, -s, s * 2, s * 2, layout.cell * 0.06); ctx.fill(); ctx.stroke();
+    // 唯一的绿色箭头标记芯片朝向，默认向上；名字与建筑一起旋转。
+    drawArrow(ctx, { cell: layout.cell * 0.35 }, { x: 0, y: -s * 0.53 }, 0, "#54e58b");
+    ctx.font = Math.max(8, layout.cell * 0.2) + "px sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#d4fffa";
+    ctx.fillText(chip ? chip.name : "芯片", 0, s * 0.35, layout.cell * 0.62);
+    ctx.restore();
+  }
+
   // ---------- 场景 ----------
 
   /**
@@ -359,7 +470,13 @@
    * @returns {object} 本次使用的布局，供交互层做命中判定
    */
   function drawScene(ctx, options) {
-    const layout = computeLayout(
+    const camera = options.camera;
+    const layout = camera ? {
+      infinite: true, width: options.width, height: options.height,
+      cell: camera.cell * options.dpr,
+      ox: options.width / 2 - camera.x * camera.cell * options.dpr,
+      oy: options.height / 2 - camera.y * camera.cell * options.dpr,
+    } : computeLayout(
       options.width,
       options.height,
       options.level.cols,
@@ -372,16 +489,28 @@
     ctx.fillRect(0, 0, options.width, options.height);
 
     drawBoard(ctx, layout);
-
+    if (options.shapeEditor) {
+      const chip = options.shapeEditor, anchor = core.appearanceAnchor(chip.appearance);
+      drawChip(ctx, layout, cellCenter(layout, anchor.x, anchor.y),
+        { x: anchor.x, y: anchor.y, orient: 0, chipId: chip.id }, [chip]);
+    }
+    if (options.compositeEditor) {
+      const chip = options.compositeEditor, anchor = core.appearanceAnchor(chip.appearance);
+      drawChip(ctx, layout, cellCenter(layout, anchor.x, anchor.y),
+        { x: anchor.x, y: anchor.y, orient: 0, chipId: chip.id }, [chip]);
+    }
     const grid = options.result.grid;
-    for (let y = 0; y < grid.rows; y += 1) {
-      for (let x = 0; x < grid.cols; x += 1) {
-        const cellData = grid.cells[y * grid.cols + x];
-        if (cellData && cellData.type === core.TILE.WALL) drawWall(ctx, layout, x, y);
-      }
+    const cells = grid.infinite ? grid.cells : grid.cells.flatMap((cell, i) => cell
+      ? [{ ...cell, x: i % grid.cols, y: Math.floor(i / grid.cols) }] : []);
+    const pointVisible = (cell) => !camera || (
+      layout.ox + (cell.x + 1) * layout.cell >= 0 && layout.ox + cell.x * layout.cell <= options.width &&
+      layout.oy + (cell.y + 1) * layout.cell >= 0 && layout.oy + cell.y * layout.cell <= options.height);
+    const visible = (cell) => cell.type === "chip" && cell.footprint ? cell.footprint.some(pointVisible) : pointVisible(cell);
+    for (const cell of cells) {
+      if (cell.type === core.TILE.WALL && visible(cell)) drawWall(ctx, layout, cell.x, cell.y);
     }
 
-    for (const target of options.result.targets) drawTarget(ctx, layout, target);
+    for (const target of options.result.targets) if (visible(target)) drawTarget(ctx, layout, target);
 
     drawBeams(ctx, layout, options.result.segments);
 
@@ -389,17 +518,19 @@
     const incomingByCell = new Map();
     for (const segment of options.result.segments) {
       const key = segment.to.x + "," + segment.to.y;
-      if (incomingByCell.has(key)) continue;
-      incomingByCell.set(key, {
-        dir: core.directionIndexFromVector(segment.to.x - segment.from.x, segment.to.y - segment.from.y),
+      const incoming = {
+        dir: core.directionIndexFromVector(Math.sign(segment.to.x - segment.from.x), Math.sign(segment.to.y - segment.from.y)),
         color: segment.color,
-      });
+      };
+      if (!incomingByCell.has(key)) incomingByCell.set(key, incoming);
+      const dirKey = key + ":" + incoming.dir;
+      incomingByCell.set(dirKey, { ...incoming, color: incoming.color | (incomingByCell.get(dirKey)?.color || 0) });
     }
 
-    for (let y = 0; y < grid.rows; y += 1) {
-      for (let x = 0; x < grid.cols; x += 1) {
-        const cellData = grid.cells[y * grid.cols + x];
-        if (!cellData) continue;
+    for (const cellData of cells) {
+        if (cellData.type === "chipPart") continue;
+        if (!visible(cellData)) continue;
+        const { x, y } = cellData;
 
         const center = cellCenter(layout, x, y);
 
@@ -417,12 +548,51 @@
           } else if (cellData.type === core.TILE.SPLITTER) {
             drawSplitter(ctx, layout, center, cellData.orient);
           } else if (cellData.type === core.TILE.PRISM) {
-            drawPrism(ctx, layout, center, cellData.orient, incomingByCell.get(x + "," + y));
+            const key = x + "," + y;
+            const entry = (2 + (cellData.facing || 0) * 2) % 8;
+            drawPrism(ctx, layout, center, cellData.orient,
+              incomingByCell.get(key + ":" + entry) || incomingByCell.get(key), cellData.facing);
+          } else if (cellData.type === "coldMirror" || cellData.type === "hotMirror") {
+            ctx.strokeStyle = cellData.type === "hotMirror" ? "#ff896d" : "#77d4ff";
+            ctx.lineWidth = Math.max(2, layout.cell * 0.12);
+            const half = layout.cell * 0.34;
+            const enabled = cellData.open === undefined ? cellData.type === "coldMirror" : cellData.open;
+            const gap = enabled ? layout.cell * 0.11 : 0;
+            const travelAxis = core.thermalAxis(cellData.type, cellData.orient);
+            const axis = { dx: -travelAxis.dy, dy: travelAxis.dx };
+            ctx.beginPath();
+            ctx.moveTo(center.x - axis.dx * half, center.y - axis.dy * half);
+            ctx.lineTo(center.x - axis.dx * gap, center.y - axis.dy * gap);
+            ctx.moveTo(center.x + axis.dx * gap, center.y + axis.dy * gap);
+            ctx.lineTo(center.x + axis.dx * half, center.y + axis.dy * half);
+            ctx.stroke();
+            if (cellData.type === "coldMirror") {
+              // 非门就在本格内，位置随通光轴旋转；控制光不接入通光路径。
+              ctx.fillStyle = cellData.receiving ? "#ffe3a3" : "#77d4ff";
+              ctx.font = Math.max(8, layout.cell * 0.25) + "px sans-serif";
+              ctx.textAlign = "center"; ctx.textBaseline = "middle";
+              ctx.fillText("¬", center.x - axis.dx * half * 1.25, center.y - axis.dy * half * 1.25);
+            }
+            if (cellData.temperature !== undefined) {
+              ctx.fillStyle = "#343b48";
+              ctx.fillRect(center.x - half, center.y + layout.cell * 0.37, half * 2, Math.max(2, layout.cell * 0.06));
+              ctx.fillStyle = "#ffac68";
+              ctx.fillRect(center.x - half, center.y + layout.cell * 0.37, half * 2 * cellData.temperature, Math.max(2, layout.cell * 0.06));
+            }
+          } else if (core.CHIP_PORT_TYPES.includes(cellData.type)) {
+            drawArrow(ctx, layout, center, cellData.orient * 2,
+              cellData.inputColor || cellData.outputColor ? "#baffd2" : "#54e58b");
+          } else if (cellData.type === "chip") {
+            drawChip(ctx, layout, center, cellData, options.chips);
+          }
+          if (cellData.waiting) {
+            ctx.fillStyle = "#ffd479";
+            ctx.beginPath(); ctx.arc(center.x + layout.cell * 0.32, center.y - layout.cell * 0.32,
+              Math.max(2, layout.cell * 0.06), 0, Math.PI * 2); ctx.fill();
           }
         } catch (error) {
           console.error(`绘制元件失败，已跳过该元件：${cellData.type} @ (${x}, ${y})`, error);
         }
-      }
     }
 
     drawHighlight(ctx, layout, options.hover, "hover");

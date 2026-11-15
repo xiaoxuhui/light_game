@@ -38,6 +38,7 @@ export const SYNC_ITEMS = [
   { type: "file", from: "index.html", to: "index.html" },
   { type: "file", from: "scripts/light-core.js", to: "scripts/light-core.js" },
   { type: "file", from: "scripts/light-engine.js", to: "scripts/light-engine.js" },
+  { type: "file", from: "scripts/simulation.js", to: "scripts/simulation.js" },
   { type: "file", from: "scripts/levels.js", to: "scripts/levels.js" },
   { type: "file", from: "scripts/renderer.js", to: "scripts/renderer.js" },
   { type: "file", from: "scripts/storage.js", to: "scripts/storage.js" },

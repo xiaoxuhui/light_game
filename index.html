@@ -28,6 +28,38 @@
       </div>
     </header>
 
+    <nav class="mode-switch" aria-label="游戏模式">
+      <button class="btn mode-switch__button" id="btn-challenge" type="button" aria-pressed="true">关卡模式</button>
+      <button class="btn mode-switch__button" id="btn-mode" type="button" aria-pressed="false">自由模式</button>
+      <span class="mode-switch__hint" id="mode-hint">挑战关卡，收集星星</span>
+      <button class="btn" id="btn-chips" type="button" hidden>芯片库</button>
+      <button class="btn" id="btn-run" type="button">暂停（空格）</button>
+      <button class="btn" id="btn-step" type="button" hidden>单步（N）</button>
+      <button class="btn" id="btn-reset" type="button">重置（R）</button>
+      <label class="step-duration">每拍 <input id="step-seconds" type="number" min="0.05" max="3600" step="0.05" value="0.5" aria-label="每拍时间（秒）" /> 秒</label>
+      <span class="simulation-status" id="simulation-status">运行 · 每拍 0.5 秒</span>
+    </nav>
+
+    <div class="chip-editor" id="chip-editor" hidden>
+      <label>芯片名称 <input id="chip-name" maxlength="24" autocomplete="off" /></label>
+      <span id="chip-editor-hint">箭头指向芯片内部，向外出光方向相反；点击旋转90°，两次转180°。R 重置运行过程。</span>
+      <button class="btn" id="btn-appearance" type="button">修改形状</button>
+      <button class="btn" id="btn-cell-appearance" type="button" hidden>本格外观</button>
+      <button class="btn btn--primary" id="btn-chip-done" type="button">保存并返回实验板</button>
+    </div>
+    <div class="chip-editor" id="chip-shape-editor" hidden>
+      <label>芯片名称 <input id="chip-shape-name" maxlength="24" autocomplete="off" placeholder="可以最后再取" aria-label="芯片名称" /></label>
+      <span>点击任意格子翻转选中／取消，拖动平移，滚轮缩放。</span>
+      <button class="btn" id="btn-shape-clear" type="button">清空形状</button>
+      <button class="btn btn--primary" id="btn-shape-next" type="button">下一步</button>
+      <button class="btn" id="btn-shape-cancel" type="button">取消</button>
+    </div>
+    <div class="chip-inspection" id="chip-inspection" hidden>
+      <span id="chip-inspection-name"></span>
+      <span>当前实例的运行过程</span>
+      <button class="btn btn--primary" id="btn-inspection-back" type="button">返回实验板</button>
+    </div>
+
     <main class="stage-area">
       <canvas id="stage" class="stage" role="img" aria-label="游戏画布"></canvas>
       <p class="stage__hint" id="level-hint"></p>
@@ -35,11 +67,21 @@
     </main>
 
     <footer class="hud hud--bottom">
+      <span class="toolbar-hint">元件栏可左右滑动 · 选好元件后点网格放置</span>
       <div class="toolbar" id="toolbar" role="toolbar" aria-label="元件工具栏"></div>
       <div class="hud__actions">
+        <span id="view-controls" hidden>
+          <button class="btn btn--ghost" id="btn-pan" type="button" aria-pressed="false">漫游</button>
+          <button class="btn btn--ghost" id="btn-zoom-out" type="button" aria-label="缩小画布">－</button>
+          <button class="btn btn--ghost" id="btn-zoom-in" type="button" aria-label="放大画布">＋</button>
+          <button class="btn btn--ghost" id="btn-home" type="button">回到起点</button>
+        </span>
+        <button class="btn btn--ghost" id="btn-copy-level" type="button" hidden>从关卡复制</button>
+        <button class="btn btn--primary" id="btn-apply-level" type="button" hidden>应用到关卡</button>
         <button class="btn btn--ghost" id="btn-undo" type="button" title="撤销（Ctrl+Z）">撤销</button>
         <button class="btn btn--ghost" id="btn-redo" type="button" title="重做（Ctrl+Shift+Z）">重做</button>
         <button class="btn btn--ghost" id="btn-clear" type="button">清空</button>
+        <button class="btn btn--ghost" id="btn-prism-colors" type="button" title="切换棱镜的 RGB 出口顺序（C）" hidden>棱镜换色</button>
         <button class="btn btn--ghost" id="btn-snapshots" type="button" title="保存或载入工作台">工作台</button>
         <button class="btn btn--ghost" id="btn-export" type="button" title="把当前关卡导出为 JSON 文件">导出</button>
         <button class="btn btn--ghost" id="btn-import" type="button" title="导入外部关卡 JSON 文件">导入</button>
@@ -60,6 +102,7 @@
   <!-- 玩法脚本按依赖顺序加载：顺序即依赖顺序，不可打乱 -->
   <script defer src="scripts/light-core.js"></script>
   <script defer src="scripts/light-engine.js"></script>
+  <script defer src="scripts/simulation.js"></script>
   <script defer src="scripts/levels.js"></script>
   <script defer src="scripts/renderer.js"></script>
   <script defer src="scripts/storage.js"></script>
